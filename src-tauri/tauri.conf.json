@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Lumza",
+  "version": "1.0.0",
+  "identifier": "dev.lumza.app",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ui run dev",
+    "beforeBuildCommand": "npm --prefix ui run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "installerHooks": "installer-hooks.nsh",
+        "languages": [
+          "English",
+          "Russian",
+          "Spanish",
+          "German",
+          "French",
+          "PortugueseBR",
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true,
+    "shortDescription": "Control monitor brightness, contrast and volume from the tray",
+    "license": "MIT OR Apache-2.0"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczMUU5RjYzQzkzQUJCQ0QKUldUTnV6ckpZNThlYzBTMEo3NjViVVVrNjJYTGpkRTFZNXZPaEs3eVNCUEwzTysyWVF0aWtHelcK",
+      "endpoints": [
+        "https://github.com/OWNER/lumza/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

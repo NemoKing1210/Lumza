@@ -1,0 +1,78 @@
+name: Release
+
+# Pushing a tag such as v1.0.0 builds the NSIS installers (x64 and ARM64) and a portable
+# archive, signs the update packages and publishes everything, plus latest.json for the
+# in-app updater, as a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: ${{ matrix.target }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            args: ""
+            out: target/release
+          - target: aarch64-pc-windows-msvc
+            args: "--target aarch64-pc-windows-msvc"
+            out: target/aarch64-pc-windows-msvc/release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: npm ci
+      - run: npm --prefix ui ci
+
+      - name: Build, sign and publish the installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Private key made with `tauri signer generate`; the public key is in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Lumza ${{ github.ref_name }}
+          releaseBody: See CHANGELOG.md for what changed in this release.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      - name: Build the command-line tool for the portable archive
+        run: cargo build --release -p lumza-cli ${{ matrix.args }}
+
+      - name: Portable archive
+        shell: pwsh
+        run: |
+          $arch = if ('${{ matrix.target }}' -like 'aarch64*') { 'arm64' } else { 'x64' }
+          $dir = "Lumza-portable-$arch"
+          New-Item $dir -ItemType Directory | Out-Null
+          Copy-Item "${{ matrix.out }}/lumza.exe", "${{ matrix.out }}/lumzactl.exe" $dir
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md, README.ru.md $dir
+          # LUMZA_DATA_DIR keeps settings next to the exe; the launcher sets it.
+          Set-Content "$dir/Lumza.cmd" '@echo off' , 'set LUMZA_DATA_DIR=%~dp0data' , 'set LUMZA_NO_AUTOSTART=1' , 'start "" "%~dp0lumza.exe"'
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          gh release upload "${{ github.ref_name }}" "$dir.zip" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# Later, once releases are stable: add a winget-releaser step (vedantmgoyal9/winget-releaser)
+# and a Scoop manifest. Code signing (SignPath Foundation) needs an application first.

@@ -1,0 +1,23 @@
+[package]
+name = "lumza-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Devices_Display",
+  "Win32_UI_WindowsAndMessaging",
+]

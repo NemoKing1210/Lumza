@@ -1,0 +1,712 @@
+//! The single place that owns monitor state, calibration and write queues (spec §7).
+//!
+//! Tray, hotkeys, schedule and the UI never touch monitors directly; they call
+//! into [`Controller`]. Every monitor has its own worker thread, so slow DDC/CI
+//! on one display never blocks another or the UI.
+
+use std::collections::{BTreeMap, HashMap};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::time::{Duration, Instant};
+
+use lumza_core::link;
+use lumza_core::scale::percent_to_raw;
+use lumza_core::store::{Cache, CachedFeature, CachedMonitor, Profile, Range, Settings, SettingsStore};
+use lumza_core::{Feature, MonitorInfo, MonitorPort, PortSource, VcpValue};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+type Probe = Vec<(Feature, Option<VcpValue>)>;
+
+enum Event {
+    /// Result of the first read after a scan: which features answer at all.
+    Probed(Probe),
+    Value(Feature, VcpValue),
+    WriteFailed(Feature),
+}
+
+type Callback = Arc<dyn Fn(Event) + Send + Sync>;
+
+// ---------------------------------------------------------------- worker
+
+#[derive(Default)]
+struct Queue {
+    /// Coalesced: at most one pending value per feature (spec §3.2).
+    writes: Vec<(Feature, u32)>,
+    probe: bool,
+    read: bool,
+    stop: bool,
+}
+
+struct Shared {
+    q: Mutex<Queue>,
+    cv: Condvar,
+}
+
+struct Worker {
+    shared: Arc<Shared>,
+}
+
+impl Worker {
+    fn spawn(mut port: Box<dyn MonitorPort>, name: String, cb: Callback) -> Self {
+        let shared = Arc::new(Shared { q: Mutex::new(Queue::default()), cv: Condvar::new() });
+        let s = shared.clone();
+        std::thread::Builder::new()
+            .name(format!("ddc-{name}"))
+            .spawn(move || loop {
+                let job = {
+                    let mut q = s.q.lock().unwrap();
+                    while q.writes.is_empty() && !q.probe && !q.read && !q.stop {
+                        q = s.cv.wait(q).unwrap();
+                    }
+                    if q.writes.is_empty() && !q.probe && !q.read {
+                        return; // stopped and drained
+                    }
+                    std::mem::take(&mut *q)
+                };
+                // A panic in one monitor's DDC code must not take the app down.
+                let r = catch_unwind(AssertUnwindSafe(|| run_job(port.as_mut(), job, &cb)));
+                if r.is_err() {
+                    tracing::error!(monitor = %name, "DDC worker panicked; continuing");
+                }
+            })
+            .expect("spawn worker");
+        Self { shared }
+    }
+
+    fn write(&self, f: Feature, raw: u32) {
+        let mut q = self.shared.q.lock().unwrap();
+        match q.writes.iter_mut().find(|(g, _)| *g == f) {
+            Some(e) => e.1 = raw,
+            None => q.writes.push((f, raw)),
+        }
+        self.shared.cv.notify_one();
+    }
+
+    fn probe(&self) {
+        self.shared.q.lock().unwrap().probe = true;
+        self.shared.cv.notify_one();
+    }
+
+    fn read(&self) {
+        self.shared.q.lock().unwrap().read = true;
+        self.shared.cv.notify_one();
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.shared.q.lock().unwrap().stop = true;
+        self.shared.cv.notify_one();
+    }
+}
+
+fn run_job(port: &mut dyn MonitorPort, job: Queue, cb: &Callback) {
+    for (f, raw) in job.writes {
+        if let Err(e) = port.set_vcp(f.vcp(), raw) {
+            tracing::warn!(feature = %f, error = %e, "write failed");
+            cb(Event::WriteFailed(f));
+            // Roll the slider back to what the monitor actually has.
+            if let Ok(v) = port.get_vcp(f.vcp()) {
+                cb(Event::Value(f, v));
+            }
+        }
+    }
+    if job.probe {
+        let res = Feature::ALL.iter().map(|&f| (f, port.get_vcp(f.vcp()).ok())).collect();
+        cb(Event::Probed(res));
+    } else if job.read {
+        for f in Feature::ALL {
+            if let Ok(v) = port.get_vcp(f.vcp()) {
+                cb(Event::Value(f, v));
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------ controller
+
+struct FeatureState {
+    feature: Feature,
+    max: u32,
+    percent: u8,
+}
+
+struct Mon {
+    info: MonitorInfo,
+    features: Vec<FeatureState>,
+    probed: bool,
+    worker: Worker,
+}
+
+#[derive(Default)]
+struct State {
+    generation: u64,
+    scanning: bool,
+    pending_probes: usize,
+    scan_started: Option<Instant>,
+    monitors: Vec<Mon>,
+    /// Last known monitors from `cache.json`, shown (read-only) until the first scan lands.
+    placeholder: Vec<CachedMonitor>,
+}
+
+/// Cache writes are delayed so a slider drag produces one disk write, not hundreds.
+const CACHE_SAVE_DELAY: Duration = Duration::from_secs(2);
+
+pub struct Controller {
+    app: AppHandle,
+    source: Mutex<Box<dyn PortSource>>,
+    state: Mutex<State>,
+    settings: Arc<SettingsStore>,
+    cache_path: PathBuf,
+    cache_save_pending: AtomicBool,
+    rescanning: AtomicBool,
+    rescan_again: AtomicBool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureDto {
+    feature: &'static str,
+    percent: u8,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorDto {
+    id: String,
+    number: u32,
+    /// Display name: the user's custom name if set, else the detected one.
+    name: String,
+    original_name: String,
+    features: Vec<FeatureDto>,
+    /// True once the probe finished; a probed monitor with no features has no DDC/CI.
+    probed: bool,
+    /// Values come from the disk cache; the monitor has not answered yet, so it is read-only.
+    stale: bool,
+    hidden: bool,
+    hidden_features: Vec<String>,
+    excluded_from_link: bool,
+    /// Calibration ranges for linked sliders, only for features the user changed.
+    calibration: Vec<CalibrationDto>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationDto {
+    feature: String,
+    min: u8,
+    max: u8,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    monitors: Vec<MonitorDto>,
+    scanning: bool,
+}
+
+/// A monitor as the scheduler sees it: id and (feature, current percent).
+pub struct SchedMonitor {
+    pub id: String,
+    pub features: Vec<(Feature, u8)>,
+}
+
+/// Outcome of a relative change, for the OSD.
+pub struct AdjustResult {
+    pub feature: Feature,
+    pub label: String,
+    pub percent: u8,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ValueChanged {
+    id: String,
+    feature: &'static str,
+    percent: u8,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct WriteFailed {
+    id: String,
+    feature: &'static str,
+}
+
+impl Controller {
+    pub fn new(
+        app: AppHandle,
+        source: Box<dyn PortSource>,
+        settings: Arc<SettingsStore>,
+        cache_path: PathBuf,
+    ) -> Arc<Self> {
+        let state = State { placeholder: Cache::load(&cache_path).monitors, scanning: true, ..State::default() };
+        Arc::new(Self {
+            app,
+            source: Mutex::new(source),
+            state: Mutex::new(state),
+            settings,
+            cache_path,
+            cache_save_pending: AtomicBool::new(false),
+            rescanning: AtomicBool::new(false),
+            rescan_again: AtomicBool::new(false),
+        })
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        snapshot_of(&self.state.lock().unwrap(), &self.settings.get())
+    }
+
+    /// Settings changed (names, order, visibility): push a fresh snapshot to the windows.
+    pub fn settings_changed(&self) {
+        let _ = self.app.emit("monitors-changed", self.snapshot());
+    }
+
+    fn schedule_cache_save(self: &Arc<Self>) {
+        if self.cache_save_pending.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let this = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(CACHE_SAVE_DELAY);
+            this.cache_save_pending.store(false, Ordering::SeqCst);
+            let cache = {
+                let st = this.state.lock().unwrap();
+                Cache {
+                    monitors: st
+                        .monitors
+                        .iter()
+                        .filter(|m| !m.features.is_empty())
+                        .map(|m| CachedMonitor {
+                            id: m.info.id.clone(),
+                            number: m.info.number,
+                            name: m.info.name.clone(),
+                            features: m
+                                .features
+                                .iter()
+                                .map(|f| CachedFeature {
+                                    feature: f.feature.name().into(),
+                                    max: f.max,
+                                    percent: f.percent,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                }
+            };
+            if let Err(e) = cache.save(&this.cache_path) {
+                tracing::warn!(error = %e, "cache save failed");
+            }
+        });
+    }
+
+    /// Re-enumerate monitors off-thread. Requests arriving mid-scan coalesce into one more pass.
+    pub fn rescan(self: &Arc<Self>) {
+        if self.rescanning.swap(true, Ordering::SeqCst) {
+            self.rescan_again.store(true, Ordering::SeqCst);
+            return;
+        }
+        let this = self.clone();
+        std::thread::Builder::new()
+            .name("scan".into())
+            .spawn(move || {
+                loop {
+                    this.rescan_again.store(false, Ordering::SeqCst);
+                    this.do_scan();
+                    if !this.rescan_again.load(Ordering::SeqCst) {
+                        break;
+                    }
+                }
+                this.rescanning.store(false, Ordering::SeqCst);
+            })
+            .expect("spawn scan");
+    }
+
+    fn do_scan(self: &Arc<Self>) {
+        let started = Instant::now();
+        let scanned = {
+            let ddc = self.settings.get().ddc;
+            let mut source = self.source.lock().unwrap();
+            source.set_timing(ddc.write_delay_ms, ddc.read_delay_ms, ddc.retries);
+            source.scan()
+        };
+        let ports = match scanned {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "scan failed");
+                Vec::new()
+            }
+        };
+        let mut st = self.state.lock().unwrap();
+        st.generation += 1;
+        let generation = st.generation;
+        st.scan_started = Some(started);
+        st.scanning = !ports.is_empty();
+        st.pending_probes = ports.len();
+        let cached: HashMap<String, CachedMonitor> =
+            std::mem::take(&mut st.placeholder).into_iter().map(|m| (m.id.clone(), m)).collect();
+        st.monitors = ports
+            .into_iter()
+            .map(|(info, port)| {
+                let weak: Weak<Controller> = Arc::downgrade(self);
+                let id = info.id.clone();
+                let cb: Callback = Arc::new(move |ev| {
+                    if let Some(c) = weak.upgrade() {
+                        c.on_event(generation, &id, ev);
+                    }
+                });
+                let worker = Worker::spawn(port, info.name.clone(), cb);
+                worker.probe();
+                let features = cached
+                    .get(&info.id)
+                    .map(|c| {
+                        c.features
+                            .iter()
+                            .filter_map(|f| {
+                                Some(FeatureState { feature: f.feature.parse().ok()?, max: f.max, percent: f.percent })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Mon { info, features, probed: false, worker }
+            })
+            .collect();
+        tracing::info!(monitors = st.monitors.len(), ms = started.elapsed().as_millis() as u64, "enumerated");
+        let snap = snapshot_of(&st, &self.settings.get());
+        drop(st);
+        let _ = self.app.emit("monitors-changed", snap);
+    }
+
+    fn on_event(self: &Arc<Self>, generation: u64, id: &str, ev: Event) {
+        let mut st = self.state.lock().unwrap();
+        if st.generation != generation {
+            return; // event from a worker of a previous scan
+        }
+        let started = st.scan_started;
+        let Some(idx) = st.monitors.iter().position(|m| m.info.id == id) else { return };
+        match ev {
+            Event::Probed(res) => {
+                let m = &mut st.monitors[idx];
+                m.features = res
+                    .into_iter()
+                    .filter_map(|(f, v)| v.map(|v| FeatureState { feature: f, max: v.max, percent: v.percent() }))
+                    .collect();
+                m.probed = true;
+                st.pending_probes = st.pending_probes.saturating_sub(1);
+                if st.pending_probes == 0 {
+                    st.scanning = false;
+                    if let Some(t) = started {
+                        tracing::info!(ms = t.elapsed().as_millis() as u64, "all monitors probed");
+                    }
+                }
+                let all_probed = !st.scanning;
+                let snap = snapshot_of(&st, &self.settings.get());
+                drop(st);
+                let _ = self.app.emit("monitors-changed", snap);
+                self.schedule_cache_save();
+                // Only once every monitor answered, so the templates cover all of them.
+                if all_probed {
+                    self.seed_templates();
+                    // Lets the schedule apply the value that is right for this moment.
+                    let _ = self.app.emit("scan-finished", ());
+                }
+            }
+            Event::Value(f, v) => {
+                let m = &mut st.monitors[idx];
+                if let Some(fs) = m.features.iter_mut().find(|x| x.feature == f) {
+                    fs.max = v.max;
+                    fs.percent = v.percent();
+                    let payload = ValueChanged { id: id.to_string(), feature: f.name(), percent: fs.percent };
+                    drop(st);
+                    let _ = self.app.emit("values-changed", payload);
+                    self.schedule_cache_save();
+                }
+            }
+            Event::WriteFailed(f) => {
+                drop(st);
+                let _ = self.app.emit("write-failed", WriteFailed { id: id.to_string(), feature: f.name() });
+            }
+        }
+    }
+
+    /// Re-read current values in the background (monitor buttons may have changed them).
+    pub fn reload_values(&self) {
+        let st = self.state.lock().unwrap();
+        for m in st.monitors.iter().filter(|m| m.probed) {
+            m.worker.read();
+        }
+    }
+
+    /// Set one feature of one monitor (0–100 %). Unknown monitors are ignored: a
+    /// hot-unplug during a drag must not surface as an error (spec §9).
+    pub fn set_value(self: &Arc<Self>, id: &str, feature: Feature, percent: u8) {
+        let applied = queue_write(&mut self.state.lock().unwrap(), id, feature, percent);
+        if applied.is_some() {
+            self.schedule_cache_save();
+        }
+    }
+
+    /// Linked sliders: one common value for every participating monitor, each mapped
+    /// through its own calibration range. Emits `values-changed` per monitor so the
+    /// individual sliders follow.
+    pub fn set_linked_value(self: &Arc<Self>, feature: Feature, percent: u8) {
+        let settings = self.settings.get();
+        let mut changed = Vec::new();
+        {
+            let mut st = self.state.lock().unwrap();
+            let ids: Vec<String> = st
+                .monitors
+                .iter()
+                .filter(|m| {
+                    !settings.monitors.get(&m.info.id).is_some_and(|s| s.excluded_from_link)
+                        && m.features.iter().any(|f| f.feature == feature)
+                })
+                .map(|m| m.info.id.clone())
+                .collect();
+            let parts: Vec<(&str, Range)> =
+                ids.iter().map(|id| (id.as_str(), range_of(&settings, id, feature))).collect();
+            for (id, p) in link::targets(percent.min(100), &parts) {
+                if let Some(applied) = queue_write(&mut st, id, feature, p) {
+                    changed.push((id.to_string(), applied));
+                }
+            }
+        }
+        for (id, applied) in changed {
+            let _ = self.app.emit("values-changed", ValueChanged { id, feature: feature.name(), percent: applied });
+        }
+        self.schedule_cache_save();
+    }
+
+    /// Apply a profile. Missing monitors or features are skipped, never touched (spec §4.2).
+    pub fn apply_profile(self: &Arc<Self>, profile_id: &str) -> bool {
+        let Some(profile) = self.settings.get().profiles.into_iter().find(|p| p.id == profile_id) else {
+            return false;
+        };
+        let mut changed = Vec::new();
+        {
+            let mut st = self.state.lock().unwrap();
+            for (id, feats) in &profile.values {
+                for (name, value) in feats {
+                    let Ok(f) = name.parse::<Feature>() else { continue };
+                    if let Some(applied) = queue_write(&mut st, id, f, *value) {
+                        changed.push((id.clone(), f, applied));
+                    }
+                }
+            }
+        }
+        for (id, f, applied) in changed {
+            let _ = self.app.emit("values-changed", ValueChanged { id, feature: f.name(), percent: applied });
+        }
+        self.schedule_cache_save();
+        true
+    }
+
+    /// Change a feature by `delta` percent (hotkeys). `target` is one monitor id, or `None` for
+    /// all monitors that have the feature. Each monitor moves relative to its own value and
+    /// is clamped to 0–100. Returns what the OSD should show.
+    pub fn adjust(self: &Arc<Self>, target: Option<&str>, feature: Feature, delta: i32) -> Option<AdjustResult> {
+        let settings = self.settings.get();
+        let mut changed: Vec<(String, u8)> = Vec::new();
+        let label;
+        {
+            let mut st = self.state.lock().unwrap();
+            let ids: Vec<String> = st
+                .monitors
+                .iter()
+                .filter(|m| target.is_none_or(|t| t == m.info.id) && m.features.iter().any(|f| f.feature == feature))
+                .map(|m| m.info.id.clone())
+                .collect();
+            label = match target {
+                Some(t) => {
+                    let m = st.monitors.iter().find(|m| m.info.id == t)?;
+                    settings
+                        .monitors
+                        .get(t)
+                        .and_then(|s| s.custom_name.clone())
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or_else(|| m.info.name.clone())
+                }
+                None => crate::i18n::t(&settings.general.language, "be.allMonitors"),
+            };
+            for id in ids {
+                let cur = st
+                    .monitors
+                    .iter()
+                    .find(|m| m.info.id == id)
+                    .and_then(|m| m.features.iter().find(|f| f.feature == feature))
+                    .map(|f| f.percent as i32)?;
+                let next = (cur + delta).clamp(0, 100) as u8;
+                if let Some(applied) = queue_write(&mut st, &id, feature, next) {
+                    changed.push((id, applied));
+                }
+            }
+        }
+        if changed.is_empty() {
+            return None;
+        }
+        let mean = (changed.iter().map(|(_, p)| *p as u32).sum::<u32>() as f32 / changed.len() as f32).round() as u8;
+        for (id, percent) in changed {
+            let _ = self.app.emit("values-changed", ValueChanged { id, feature: feature.name(), percent });
+        }
+        self.schedule_cache_save();
+        Some(AdjustResult { feature, label, percent: mean })
+    }
+
+    /// Connected, answering monitors and the features they have, for the scheduler.
+    pub fn schedule_monitors(&self) -> Vec<SchedMonitor> {
+        let st = self.state.lock().unwrap();
+        st.monitors
+            .iter()
+            .filter(|m| m.probed)
+            .map(|m| SchedMonitor {
+                id: m.info.id.clone(),
+                features: m.features.iter().map(|f| (f.feature, f.percent)).collect(),
+            })
+            .collect()
+    }
+
+    /// Apply values prescribed by the schedule. Monitors/features that are gone are skipped and
+    /// values already in place cause no write (EEPROM wear, spec §12).
+    pub fn apply_scheduled(self: &Arc<Self>, values: &[(String, Feature, u8)]) -> usize {
+        let mut changed = Vec::new();
+        {
+            let mut st = self.state.lock().unwrap();
+            for (id, f, v) in values {
+                let same = st
+                    .monitors
+                    .iter()
+                    .find(|m| &m.info.id == id)
+                    .and_then(|m| m.features.iter().find(|x| x.feature == *f))
+                    .map(|x| x.percent == (*v).min(100));
+                if same == Some(false) {
+                    if let Some(applied) = queue_write(&mut st, id, *f, *v) {
+                        changed.push((id.clone(), *f, applied));
+                    }
+                }
+            }
+        }
+        let n = changed.len();
+        for (id, f, applied) in changed {
+            let _ = self.app.emit("values-changed", ValueChanged { id, feature: f.name(), percent: applied });
+        }
+        if n > 0 {
+            self.schedule_cache_save();
+        }
+        n
+    }
+
+    /// Current value of every feature of every connected monitor, for "save as profile".
+    pub fn current_values(&self) -> BTreeMap<String, BTreeMap<String, u8>> {
+        let st = self.state.lock().unwrap();
+        st.monitors
+            .iter()
+            .filter(|m| m.probed && !m.features.is_empty())
+            .map(|m| {
+                (m.info.id.clone(), m.features.iter().map(|f| (f.feature.name().to_string(), f.percent)).collect())
+            })
+            .collect()
+    }
+
+    /// First run: create the built-in Day / Night / Games profiles from the monitors found.
+    fn seed_templates(&self) {
+        let settings = self.settings.get();
+        if settings.templates_seeded {
+            return;
+        }
+        let have_brightness: Vec<String> =
+            self.current_values().into_iter().filter(|(_, f)| f.contains_key("brightness")).map(|(id, _)| id).collect();
+        if have_brightness.is_empty() {
+            return; // nothing to build them from yet; try again after the next scan
+        }
+        let mk = |id: &str, name: &str, icon: &str, brightness: u8| Profile {
+            id: id.into(),
+            name: name.into(),
+            icon: icon.into(),
+            values: have_brightness
+                .iter()
+                .map(|m| (m.clone(), BTreeMap::from([("brightness".to_string(), brightness)])))
+                .collect(),
+        };
+        let mut profiles = settings.profiles;
+        profiles.push(mk("tpl-day", "Day", "sun", 80));
+        profiles.push(mk("tpl-night", "Night", "moon", 25));
+        profiles.push(mk("tpl-games", "Games", "game", 100));
+        match self.settings.update(&serde_json::json!({ "profiles": profiles, "templatesSeeded": true })) {
+            Ok(new) => {
+                let _ = self.app.emit("settings-changed", &new);
+            }
+            Err(e) => tracing::warn!(error = %e, "seeding profile templates failed"),
+        }
+    }
+}
+
+fn range_of(settings: &Settings, id: &str, f: Feature) -> Range {
+    settings.monitors.get(id).and_then(|m| m.calibration.get(f.name())).copied().unwrap_or_default()
+}
+
+/// Update state and queue the DDC write. Returns the percent actually applied.
+fn queue_write(st: &mut State, id: &str, feature: Feature, percent: u8) -> Option<u8> {
+    let m = st.monitors.iter_mut().find(|m| m.info.id == id)?;
+    let fs = m.features.iter_mut().find(|x| x.feature == feature)?;
+    fs.percent = percent.min(100);
+    m.worker.write(feature, percent_to_raw(fs.percent, fs.max));
+    Some(fs.percent)
+}
+
+fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
+    let dto = |id: &str, number: u32, name: &str, features: Vec<FeatureDto>, probed: bool, stale: bool| {
+        let ms = settings.monitors.get(id);
+        MonitorDto {
+            id: id.to_string(),
+            number,
+            name: ms
+                .and_then(|m| m.custom_name.clone())
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| name.to_string()),
+            original_name: name.to_string(),
+            features,
+            probed,
+            stale,
+            hidden: ms.is_some_and(|m| m.hidden),
+            hidden_features: ms.map(|m| m.hidden_features.clone()).unwrap_or_default(),
+            excluded_from_link: ms.is_some_and(|m| m.excluded_from_link),
+            calibration: ms
+                .map(|m| {
+                    m.calibration
+                        .iter()
+                        .map(|(f, r)| CalibrationDto { feature: f.clone(), min: r.min, max: r.max })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    };
+    let mut monitors: Vec<MonitorDto> = if st.monitors.is_empty() && !st.placeholder.is_empty() {
+        st.placeholder
+            .iter()
+            .map(|c| {
+                let f = c
+                    .features
+                    .iter()
+                    .filter_map(|f| {
+                        Some(FeatureDto { feature: f.feature.parse::<Feature>().ok()?.name(), percent: f.percent })
+                    })
+                    .collect();
+                dto(&c.id, c.number, &c.name, f, false, true)
+            })
+            .collect()
+    } else {
+        st.monitors
+            .iter()
+            .map(|m| {
+                let f =
+                    m.features.iter().map(|f| FeatureDto { feature: f.feature.name(), percent: f.percent }).collect();
+                dto(&m.info.id, m.info.number, &m.info.name, f, m.probed, !m.probed && !m.features.is_empty())
+            })
+            .collect()
+    };
+    monitors.sort_by_key(|m| (settings.monitors.get(&m.id).map_or(0, |s| s.order), m.number));
+    Snapshot { scanning: st.scanning, monitors }
+}

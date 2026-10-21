@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work with your monitor
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        DDC/CI behaves differently on every monitor, so the model and the connection matter a lot.
+  - type: input
+    id: monitor
+    attributes:
+      label: Monitor model
+      placeholder: "LG ULTRAGEAR 27GP850, AOC 27G2G3 …"
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - DisplayPort (direct)
+        - HDMI (direct)
+        - USB-C / Thunderbolt (direct)
+        - Docking station / USB-C hub
+        - DisplayLink
+        - KVM switch
+        - Laptop built-in panel
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Lumza and Windows version
+      placeholder: "Lumza 1.0.0, Windows 11 24H2"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log
+      description: |
+        Paste the end of `%LOCALAPPDATA%\Lumza\logs\lumza.log` (Settings → About shows the path).
+      render: text
+  - type: textarea
+    id: caps
+    attributes:
+      label: Capabilities string (optional)
+      description: Output of `lumzactl caps 1` (the tool is in the portable archive).
+      render: text

@@ -1,0 +1,390 @@
+/* Tokens mirror Tokenza (Light / Dark). */
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a1a; --fg2: #5f5f66; --card: #ffffff; --stroke: #e2e2e6;
+  --track: #e4e4e8; --solid-bg: #f3f3f5; --glass: rgba(243, 243, 245, 0.88); --thumb-ring: #ffffff;
+  --accent: #0067c0; --on-accent: #ffffff; --critical: #c42b1c; --warning: #b86e00;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-move: cubic-bezier(0.2, 0.8, 0.2, 1);
+  font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+:root[data-theme="light"] { color-scheme: light; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --fg: #fff; --fg2: #c8c8ce; --card: #3a3a3c; --stroke: #4a4a4e; --track: #55555a;
+    --solid-bg: #2c2c2e; --glass: rgba(44, 44, 46, 0.88); --thumb-ring: #3a3a3c; --accent: #60cdff; --on-accent: #003a66;
+    --critical: #ff99a4; --warning: #ffc24d; }
+}
+:root[data-theme="dark"] { color-scheme: dark; --fg: #fff; --fg2: #c8c8ce; --card: #3a3a3c; --stroke: #4a4a4e; --track: #55555a;
+  --solid-bg: #2c2c2e; --glass: rgba(44, 44, 46, 0.88); --thumb-ring: #3a3a3c; --accent: #60cdff; --on-accent: #003a66;
+  --critical: #ff99a4; --warning: #ffc24d; }
+@media (forced-colors: active) { :root { --accent: Highlight; --track: CanvasText; } }
+
+* { box-sizing: border-box; margin: 0; }
+html, body { background: transparent; color: var(--fg); overflow: hidden; user-select: none; -webkit-user-select: none; }
+/* A flyout taller than the screen scrolls with the wheel; the scrollbar stays hidden. */
+html:has(body.flyout) { overflow-x: hidden; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; }
+html:has(body.flyout)::-webkit-scrollbar { display: none; }
+body.flyout { overflow: visible; }
+.glyph, .big, button.icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
+
+/* The window already has Mica/Acrylic, its own rounded corners and border: main paints nothing of its own,
+   otherwise the backdrop is doubled. Only without a backdrop (main.solid) it supplies an opaque fill. */
+main { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 12px; }
+main.solid { background: var(--solid-bg); border: 1px solid var(--stroke); border-radius: 8px; }
+
+.card { background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+header { display: flex; align-items: center; gap: 8px; }
+.badge { min-width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 600; display: grid; place-items: center; }
+@media (forced-colors: active) { .badge { color: HighlightText; } }
+.name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note { color: var(--fg2); font-size: 12.5px; user-select: text; }
+
+.row { display: grid; grid-template-columns: 20px 1fr 26px; align-items: center; gap: 10px; height: 32px; }
+.glyph { font-size: 16px; text-align: center; color: var(--fg2); }
+.val { font-size: 12px; text-align: right; color: var(--fg2); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity 100ms; }
+.row:hover .val, .row.active .val, .row:focus-within .val { opacity: 1; }
+
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; background: transparent; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--fill), var(--track) var(--fill));
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%;
+  background: var(--accent); border: 4px solid var(--thumb-ring); box-shadow: 0 0 0 1px var(--stroke), 0 1px 3px rgb(0 0 0 / .3);
+  transition: transform 100ms;
+}
+input[type="range"]:hover::-webkit-slider-thumb, input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.12); }
+input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+footer { display: flex; justify-content: flex-end; }
+button { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--stroke); border-radius: 6px; padding: 5px 14px; cursor: pointer; }
+button:hover { filter: brightness(1.08); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.icon { width: 32px; height: 32px; padding: 0; font-size: 15px; background: transparent; border-color: transparent; }
+button.icon:hover { background: var(--card); }
+
+.empty { display: grid; justify-items: center; gap: 8px; padding: 20px 0 8px; color: var(--fg2); }
+.big { font-size: 36px; }
+
+.bar { height: 14px; border-radius: 4px; background: var(--stroke); animation: pulse 1.2s ease-in-out infinite; }
+.bar.w40 { width: 40%; }
+@keyframes pulse { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .bar { animation: none; } }
+
+.toast { position: fixed; left: 12px; right: 12px; bottom: 12px; padding: 8px 12px; border-radius: 6px; background: var(--fg); color: var(--solid-bg); font-size: 12.5px; }
+
+/* flyout: values always visible / disabled (cached) rows */
+main.always .val { opacity: 1; }
+.row.disabled { opacity: .55; }
+input[type="range"]:disabled { cursor: default; }
+footer { gap: 2px; }
+
+/* settings window */
+body.settings { background: var(--solid-bg); overflow: hidden; }
+.window { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.shell { display: grid; grid-template-columns: 200px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; }
+nav { padding: 16px 8px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--stroke); }
+nav h1 { font-size: 15px; font-weight: 600; padding: 0 12px 12px; }
+.navitem { display: flex; align-items: center; gap: 10px; text-align: left; border-color: transparent; background: transparent; padding: 8px 12px; }
+.navitem.current { background: var(--card); border-color: var(--stroke); }
+.navglyph { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; width: 18px; text-align: center; }
+.content { padding: 24px 14px 28px 28px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; scrollbar-gutter: stable; animation: pane-in 0.34s var(--ease-out) both; }
+.content > * { width: 100%; max-width: 640px; flex: none; margin-inline: auto; }
+.content h2 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+.group { background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; display: flex; flex-direction: column; }
+.line { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; min-height: 56px; }
+.line + .line, .mhead + .line { border-top: 1px solid var(--stroke); }
+.line small { display: block; color: var(--fg2); font-size: 12px; font-weight: 400; margin-top: 2px; }
+.line b { font-weight: 600; }
+.muted { color: var(--fg2); font-size: 13px; padding: 4px 16px 12px; }
+.mono { font-family: Consolas, monospace; user-select: text; word-break: break-all; }
+select, input[type="text"] { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--stroke); border-radius: 6px; padding: 5px 10px; }
+select:focus-visible, input[type="text"]:focus-visible { outline: 2px solid var(--accent); }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper input[type="range"] { width: 140px; }
+.stepper output { min-width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+
+input.switch { -webkit-appearance: none; appearance: none; width: 40px; height: 20px; border-radius: 10px; border: 1px solid var(--fg2); background: transparent; position: relative; cursor: pointer; flex: none; }
+input.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--fg2); transition: transform 100ms, background 100ms; }
+input.switch:checked { background: var(--accent); border-color: var(--accent); }
+input.switch:checked::after { transform: translateX(20px); background: var(--on-accent); }
+input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.monitor { padding-bottom: 4px; }
+.mhead { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
+.mhead .name { flex: 1; font-weight: 600; }
+.order { display: flex; gap: 2px; }
+.order button.icon:disabled { opacity: .35; cursor: default; }
+.features { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 12px 16px; border-top: 1px solid var(--stroke); }
+.check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+/* stage 4: link toggle, profiles panel */
+footer { justify-content: flex-start; }
+footer .spacer { flex: 1; }
+button.icon.on { background: var(--accent); color: var(--on-accent); }
+@media (forced-colors: active) { button.icon.on { color: HighlightText; } }
+.badge.link { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 13px; font-weight: 400; }
+button:disabled { opacity: .5; cursor: default; }
+
+/* settings: calibration, profiles */
+input[type="number"] { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--stroke); border-radius: 6px; padding: 4px 6px; width: 64px; }
+input[type="number"]:focus-visible { outline: 2px solid var(--accent); }
+.range { display: flex; align-items: center; gap: 6px; }
+.line.calib { border-top: 1px solid var(--stroke); }
+.glyph.big-glyph { font-size: 20px; width: 28px; text-align: center; font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
+.profile-card .features.icons { gap: 4px 6px; }
+button.icon.pick.on { background: var(--accent); color: var(--on-accent); }
+.pvalues { display: flex; flex-direction: column; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--stroke); }
+.pvrow { display: grid; grid-template-columns: 150px 1fr 76px; align-items: center; gap: 12px; }
+.pvrow output { font-size: 12px; color: var(--fg2); text-align: right; }
+.line.actions { border-top: 1px solid var(--stroke); justify-content: flex-start; }
+button.danger { color: var(--critical); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.danger { color: var(--critical); } }
+
+/* OSD window: transparent page, the card is the only visible thing */
+body.osd { overflow: hidden; }
+.osdcard { margin: 6px; height: calc(100vh - 12px); display: flex; align-items: center; gap: 14px; padding: 0 18px;
+  border-radius: 12px; background: color-mix(in srgb, var(--solid-bg) 92%, transparent); border: 1px solid var(--stroke);
+  box-shadow: 0 6px 20px rgb(0 0 0 / .35); animation: osdin 120ms ease-out; }
+@keyframes osdin { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .osdcard { animation: none; } }
+.oglyph { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 26px; width: 30px; text-align: center; flex: none; }
+.obody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.olabel { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.obar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.ofill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 80ms linear; }
+.oval { font-size: 22px; font-weight: 600; min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* settings: hotkeys */
+.hkrow { display: grid; grid-template-columns: auto 240px minmax(0, 1fr) 150px auto; align-items: center; gap: 8px; padding: 10px 16px; }
+.hkrow + .hkrow { border-top: 1px solid var(--stroke); }
+.hkrow select { min-width: 0; }
+.hkrow.off > :not(:first-child):not(.icon) { opacity: 0.5; }
+.group.off .hkrow { opacity: 0.5; }
+button.recorder { min-width: 0; font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; text-align: center; }
+button.recorder.rec { outline: 2px solid var(--accent); }
+button.recorder.unset { color: var(--fg2); }
+.hkerr { grid-column: 1 / -1; color: var(--critical); font-size: 12px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hkerr { color: var(--critical); } }
+:root[data-theme="dark"] .hkerr { color: var(--critical); }
+.hkfoot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--stroke); }
+
+/* stage 6: pause banner, schedule settings */
+.banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px;
+  border-radius: 8px; background: var(--card); border: 1px solid var(--accent); font-size: 13px; }
+button.link { background: transparent; border: none; color: var(--accent); padding: 2px 4px; text-decoration: underline; }
+@media (forced-colors: active) { button.link { color: LinkText; } }
+
+.sched-day { padding: 12px 16px 8px; }
+.sched-day svg { width: 100%; height: 150px; display: block; overflow: visible; }
+.sched-day .axis { stroke: var(--stroke); }
+.sched-day .curve { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.sched-day .night { fill: var(--stroke); }
+.sched-day .pt { stroke: var(--fg2); stroke-dasharray: 3 3; }
+.sched-day .dot { fill: var(--accent); stroke: var(--thumb-ring); stroke-width: 2; }
+.sched-day .nowline { stroke: var(--critical); stroke-width: 1.5; }
+.sched-day text { fill: var(--fg2); font-size: 11px; }
+.sched-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--fg2); font-size: 12px; padding: 0 16px 12px; }
+.prow { display: grid; grid-template-columns: 200px 130px 1fr auto; grid-template-areas: "when time . del" "act act act act";
+  gap: 8px; align-items: center; padding: 10px 16px; }
+.prow > :nth-child(1) { grid-area: when; }
+.prow > :nth-child(2) { grid-area: time; }
+.prow > .act { grid-area: act; }
+.prow > button.icon { grid-area: del; }
+.prow + .prow { border-top: 1px solid var(--stroke); }
+.prow .act { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.prow .act select { min-width: 150px; max-width: 220px; }
+.prow .act input[type="number"] { width: 72px; }
+.prow input[type="time"] { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--stroke); border-radius: 6px; padding: 4px 8px; }
+.inline { display: flex; align-items: center; gap: 6px; }
+.coords { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--stroke); }
+.coords input[type="number"] { width: 110px; }
+.coords input[type="text"] { width: 160px; }
+
+
+/* ====================== Tokenza look ====================== */
+h1 { font-size: 15px; font-weight: 700; }
+.content h2 { font-size: 26px; font-weight: 600; margin-bottom: 8px; }
+
+/* Flyout header */
+.flyout-head { display: flex; align-items: center; gap: 8px; }
+.flyout-head h1 { flex: 1; }
+
+/* Entrance: header, cards and footer rise in one after another. */
+@keyframes rise-a { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes rise-b { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+main:not(.shown) .stagger { opacity: 0; }
+main.shown .stagger { animation: rise-a 0.42s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 50ms); }
+main.shown.alt .stagger { animation-name: rise-b; }
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.banner, .toast { animation: fade-in 0.35s ease both; }
+
+/* Small touches */
+.card, .group { transition: border-color 0.2s ease, box-shadow 0.25s ease; }
+.card:hover { box-shadow: 0 3px 14px rgba(0, 0, 0, 0.14); border-color: color-mix(in srgb, var(--accent) 35%, var(--stroke)); }
+button { transition: background-color 0.15s ease, transform 0.12s var(--ease-move), opacity 0.15s ease, color 0.15s ease; }
+button:hover { filter: none; background: color-mix(in srgb, var(--fg) 8%, var(--card)); }
+button.icon:hover { background: var(--track); }
+button.icon.on:hover { background: var(--accent); filter: brightness(1.08); }
+button.icon:active:not(:disabled), button:active:not(:disabled) { transform: scale(0.96); }
+.badge { border-radius: 50%; }
+
+/* Slider fills grow from the left on entrance. */
+@property --fill { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+@keyframes fill-in { from { --fill: 0%; } }
+main.shown .row input[type="range"] { animation: fill-in 0.8s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 50ms + 140ms); }
+main.shown.alt .row input[type="range"] { animation-name: fill-in-b; }
+@keyframes fill-in-b { from { --fill: 0%; } }
+
+/* Settings navigation */
+nav { padding: 8px; }
+nav h1 { display: none; }
+.navitem { position: relative; border: 0; border-radius: 4px; transition: background-color 0.18s ease, transform 0.12s var(--ease-move); }
+.navitem:hover { background: var(--track); }
+.navitem.current { background: var(--card); font-weight: 600; border: 0; }
+.navitem.current::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 16px; border-radius: 2px; background: var(--accent); animation: indicator-in 0.32s var(--ease-move) both; }
+@keyframes indicator-in { from { transform: translateY(-50%) scaleY(0); } to { transform: translateY(-50%) scaleY(1); } }
+@keyframes pane-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+.content::-webkit-scrollbar { width: 14px; }
+.content::-webkit-scrollbar-button { display: none; height: 0; }
+.content::-webkit-scrollbar-track { background: transparent; }
+.content::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 28%, transparent); border: 4px solid transparent; background-clip: padding-box; border-radius: 8px; }
+.content::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 45%, transparent); background-clip: padding-box; }
+.content::-webkit-scrollbar-thumb:active { background: var(--accent); background-clip: padding-box; }
+
+/* Custom title bar (settings window) */
+.titlebar { display: flex; align-items: stretch; justify-content: space-between; flex: none; height: 40px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--card) 55%, var(--solid-bg)), var(--solid-bg)); border-bottom: 1px solid var(--stroke); }
+.tb-brand { display: flex; align-items: center; gap: 8px; padding-left: 14px; min-width: 0; pointer-events: none; }
+.tb-name { font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; }
+.tb-controls { display: flex; flex: none; }
+.titlebar .tb-btn { display: grid; place-items: center; width: 46px; height: 100%; padding: 0; background: none; border: 0; border-radius: 0; color: var(--fg2); }
+.titlebar .tb-btn:hover { background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); }
+.titlebar .tb-btn:active { transform: none; background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.titlebar .tb-close:hover { background: #c42b1c; color: #fff; }
+.titlebar .tb-close:active { background: #b02518; color: #fff; }
+.tb-btn svg { transition: transform 0.2s var(--ease-move); }
+.tb-btn:hover svg { transform: scale(1.08); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* ====================== Profile picker (flyout) ====================== */
+/* The drawer unfolds from zero height (0fr -> 1fr) and cancels the flex gap while it is folded. */
+.drawer { display: grid; grid-template-rows: 0fr; margin-top: -8px; transition: grid-template-rows 0.34s var(--ease-move), margin-top 0.34s var(--ease-move); }
+.drawer.open { grid-template-rows: 1fr; margin-top: 0; }
+.drawer-inner { overflow: hidden; min-height: 0; }
+.pcard { gap: 10px; opacity: 0; transform: translateY(-4px); transition: opacity 0.25s ease, transform 0.3s var(--ease-move); }
+.drawer.open .pcard { opacity: 1; transform: none; }
+.ptiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ptile { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 10px 4px 8px; background: transparent; border: 1px solid var(--stroke); border-radius: 8px; }
+.ptile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--stroke)); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+.ptile .pic { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--track); color: var(--fg);
+  font: 16px "Segoe Fluent Icons", "Segoe MDL2 Assets"; transition: background-color 0.18s ease, color 0.18s ease, transform 0.25s var(--ease-move); }
+.ptile:hover .pic { background: var(--accent); color: var(--on-accent); transform: scale(1.08); }
+.ptile .pname { max-width: 100%; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptile.done, .ptile.done:hover { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.ptile.done .pic { background: var(--accent); color: var(--on-accent); animation: pop 0.35s var(--ease-out); }
+@keyframes pop { from { transform: scale(0.6); } to { transform: scale(1); } }
+.ptile.add { border-style: dashed; color: var(--fg2); }
+.ptile.add.on { border-style: solid; border-color: var(--accent); color: var(--fg); }
+.ptile.add .pic { background: transparent; border: 1px dashed var(--fg2); }
+.drawer.open .ptile { animation: rise-a 0.32s var(--ease-out) both; animation-delay: calc(var(--k, 0) * 35ms + 90ms); }
+.padd { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--stroke); animation: fade-in 0.28s ease both; }
+.picks { display: flex; gap: 4px; justify-content: space-between; }
+button.icon.pick { width: 34px; height: 34px; border-radius: 50%; background: var(--track); }
+button.icon.pick:hover { background: color-mix(in srgb, var(--accent) 30%, var(--track)); }
+.padd .save { display: flex; gap: 6px; }
+.padd .save input { flex: 1; min-width: 0; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+
+.mark { flex: none; width: 18px; height: 18px; border-radius: 4px; display: block; }
+
+/* Profile preview: sliders glide to the previewed values and tint the readout. */
+.row:not(.active) input[type="range"] { transition: --fill 0.28s var(--ease-move); }
+.row.previewing .val { opacity: 1; color: var(--accent); font-weight: 600; }
+.row.previewing input[type="range"]::-webkit-slider-thumb { box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+/* "Save current" tile spans the whole row. */
+.ptile.add { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 10px; padding: 8px 12px; }
+.ptile.add .pname { max-width: none; }
+.ptile.add:hover, .ptile.add.on { color: var(--fg); border-style: solid; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.ptile.add:hover .pic, .ptile.add.on .pic { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+/* ====================== Flyout cards: Windows 11 / WinUI 3 (Fluent) ====================== */
+:root { --card-fill: rgb(255 255 255 / .7); --stroke-card: rgb(0 0 0 / .058); --hover-fill: rgb(0 0 0 / .0373); --press-fill: rgb(0 0 0 / .0241); --thumb-stroke: rgb(0 0 0 / .1); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --card-fill: rgb(255 255 255 / .0512); --stroke-card: rgb(0 0 0 / .1); --hover-fill: rgb(255 255 255 / .0605); --press-fill: rgb(255 255 255 / .0326); --thumb-stroke: rgb(255 255 255 / .09); }
+}
+:root[data-theme="dark"] { --card-fill: rgb(255 255 255 / .0512); --stroke-card: rgb(0 0 0 / .1); --hover-fill: rgb(255 255 255 / .0605); --press-fill: rgb(255 255 255 / .0326); --thumb-stroke: rgb(255 255 255 / .09); }
+
+/* Card: layer fill, hairline stroke, 8px overlay radius, no shadow (elevation comes from the flyout itself). */
+main > .card { gap: 4px; padding: 12px 16px 8px; border-radius: 8px; background: var(--card-fill); border: 1px solid var(--stroke-card); box-shadow: none; }
+main > .card:hover { box-shadow: none; border-color: var(--stroke-card); }
+main > .card > header { gap: 10px; padding: 0 0 6px; border-bottom: 0; }
+main > .card .name { font-size: 14px; font-weight: 600; letter-spacing: 0; }
+.badge { min-width: 22px; height: 22px; border-radius: 4px; background: var(--accent); box-shadow: none; font-size: 12px; }
+.badge.link { border-radius: 4px; }
+
+/* Row: plain Fluent glyph, slider, caption-sized value. */
+.row { grid-template-columns: 20px 1fr 30px; gap: 12px; height: 36px; }
+.row .glyph { display: block; width: 20px; height: 20px; border-radius: 0; background: none; color: var(--fg); font-size: 16px; line-height: 20px; transform: none; }
+.row:hover .glyph, .row.active .glyph { background: none; transform: none; }
+svg.glyph { box-sizing: border-box; padding: 2px; }
+.row.disabled .glyph { background: none; color: var(--fg2); }
+.val { justify-self: end; min-width: 0; padding: 0; border-radius: 0; background: none; color: var(--fg2); font-size: 12px; font-weight: 400; text-align: right; }
+
+/* Slider: 4px rounded track, 20px thumb with an accent core that grows on hover and shrinks on press. */
+@property --inner { syntax: "<length>"; inherits: false; initial-value: 6px; }
+input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; }
+input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -8px; border: 1px solid var(--thumb-stroke); border-radius: 50%;
+  --inner: 6px;
+  background: radial-gradient(circle closest-side, var(--accent) var(--inner), var(--thumb-ring) calc(var(--inner) + .5px));
+  box-shadow: 0 1px 2px rgb(0 0 0 / .2); transform: none; transition: --inner 0.167s var(--ease-out); }
+input[type="range"]:hover::-webkit-slider-thumb { --inner: 7px; transform: none; }
+input[type="range"]:active::-webkit-slider-thumb { --inner: 5px; transform: none; }
+input[type="range"]:disabled::-webkit-slider-thumb { --inner: 5px; background: radial-gradient(circle closest-side, var(--fg2) 5px, var(--thumb-ring) 5.5px); }
+.row.previewing input[type="range"]::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent), 0 1px 2px rgb(0 0 0 / .2); }
+.row.previewing .val { color: var(--accent); font-weight: 600; }
+.note { padding: 2px 0 6px; }
+
+/* Subtle buttons (footer icons): transparent, 4px radius, fill on hover / press, accent core when toggled. */
+footer button.icon { width: 32px; height: 32px; border-radius: 4px; background: transparent; border: 0; color: var(--fg); }
+footer button.icon:hover { background: var(--hover-fill); }
+footer button.icon:active:not(:disabled) { background: var(--press-fill); transform: none; color: var(--fg2); }
+footer button.icon.on, footer button.icon.on:hover { background: var(--accent); color: var(--on-accent); filter: none; }
+
+/* ====================== Profile picker: Windows 11 / WinUI 3 (Fluent) ====================== */
+.pcard { gap: 8px; padding: 8px; border-radius: 8px; background: var(--card-fill); border: 1px solid var(--stroke-card); box-shadow: none; }
+.pcard:hover { box-shadow: none; border-color: var(--stroke-card); }
+.ptiles { gap: 4px; }
+/* Tile = Fluent list item: transparent, 4px radius, fill on hover / press, accent indicator when picked. */
+.ptile { position: relative; flex-direction: column; gap: 4px; padding: 10px 4px 8px; background: transparent; border: 0; border-radius: 4px; color: var(--fg); }
+.ptile:hover { background: var(--hover-fill); border: 0; }
+.ptile:active:not(.add) { background: var(--press-fill); transform: none; }
+.ptile .pic, .ptile:hover .pic { width: 24px; height: 24px; border-radius: 0; background: none; border: 0; color: var(--fg); font-size: 18px; transform: none; }
+.ptile .pname { font-size: 12px; font-weight: 400; color: var(--fg); }
+.ptile.done, .ptile.done:hover { background: var(--hover-fill); box-shadow: none; border: 0; }
+.ptile.done::before { content: ""; position: absolute; left: 50%; bottom: 1px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--accent); animation: indicator-in 0.32s var(--ease-move) both; }
+.ptile.done .pic { background: none; color: var(--accent); animation: pop 0.35s var(--ease-out); }
+/* Row-wide "save current" item, separated from the tiles by a hairline. */
+.ptile.add, .ptile.add:hover, .ptile.add.on { grid-column: 1 / -1; flex-direction: row; justify-content: flex-start; gap: 12px; margin-top: 4px; padding: 8px 12px; border: 0; border-top: 1px solid var(--stroke); border-radius: 0 0 4px 4px; background: transparent; color: var(--fg); }
+.ptile.add:hover, .ptile.add.on { background: var(--hover-fill); }
+.ptile.add .pic, .ptile.add:hover .pic, .ptile.add.on .pic { width: 20px; height: 20px; border: 0; background: none; color: var(--accent); font-size: 14px; }
+.ptile.add .pname { flex: 1; text-align: left; }
+.padd { gap: 8px; padding: 8px 4px 4px; border-top: 0; }
+.picks { gap: 2px; justify-content: flex-start; }
+button.icon.pick { width: 32px; height: 32px; border-radius: 4px; background: transparent; color: var(--fg); }
+button.icon.pick:hover { background: var(--hover-fill); }
+button.icon.pick.on, button.icon.pick.on:hover { background: var(--hover-fill); color: var(--accent); box-shadow: inset 0 -3px 0 -1px var(--accent); }
+/* Text box: 4px radius, hairline stroke, accent underline on focus. */
+.padd .save input[type="text"] { height: 32px; padding: 0 10px; border: 1px solid var(--stroke); border-bottom-color: color-mix(in srgb, var(--fg) 45%, transparent); border-radius: 4px; background: var(--card-fill); }
+.padd .save input[type="text"]:focus { outline: none; border-bottom: 2px solid var(--accent); padding-bottom: 0; }
+.padd .save button { height: 32px; border-radius: 4px; border: 1px solid var(--stroke); }
+.padd .save button.primary { border-color: var(--accent); }
+.padd .save button.primary:disabled { background: var(--hover-fill); border-color: var(--stroke); color: var(--fg2); opacity: 1; }
