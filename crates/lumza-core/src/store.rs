@@ -63,6 +63,10 @@ impl Default for Range {
 #[serde(rename_all = "camelCase", default)]
 pub struct MonitorSettings {
     pub custom_name: Option<String>,
+    /// Badge colour as `#rrggbb`; `None` uses the accent colour.
+    pub color: Option<String>,
+    /// Badge icon key (see the UI's `MONITOR_ICONS`); `None` shows the monitor number.
+    pub icon: Option<String>,
     pub hidden: bool,
     pub order: i32,
     /// Features the user chose not to show in the flyout ("brightness" | "contrast" | "volume").
@@ -130,8 +134,16 @@ fn enabled_by_default() -> bool {
 
 pub fn default_hotkeys() -> Vec<Hotkey> {
     vec![
-        Hotkey { accelerator: "Ctrl+Alt+ArrowUp".into(), action: HotkeyAction::BrightnessAll { delta: 1 }, enabled: true },
-        Hotkey { accelerator: "Ctrl+Alt+ArrowDown".into(), action: HotkeyAction::BrightnessAll { delta: -1 }, enabled: true },
+        Hotkey {
+            accelerator: "Ctrl+Alt+ArrowUp".into(),
+            action: HotkeyAction::BrightnessAll { delta: 1 },
+            enabled: true,
+        },
+        Hotkey {
+            accelerator: "Ctrl+Alt+ArrowDown".into(),
+            action: HotkeyAction::BrightnessAll { delta: -1 },
+            enabled: true,
+        },
         Hotkey { accelerator: "Ctrl+Alt+B".into(), action: HotkeyAction::Flyout, enabled: true },
     ]
 }
@@ -293,6 +305,10 @@ impl Default for Settings {
 /// UI languages that have a `locales/<code>.json`.
 pub const LANGUAGES: [&str; 7] = ["en", "ru", "es", "de", "fr", "pt", "zh"];
 
+fn is_hex_color(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
 impl Settings {
     fn sanitize(&mut self) {
         self.general.step = self.general.step.clamp(1, 20);
@@ -306,6 +322,12 @@ impl Settings {
             self.general.show_values = "always".into();
         }
         for m in self.monitors.values_mut() {
+            if m.color.as_deref().is_some_and(|c| !is_hex_color(c)) {
+                m.color = None;
+            }
+            if m.icon.as_deref().is_some_and(|i| i.is_empty() || i.len() > 24 || !i.chars().all(|c| c.is_ascii_alphanumeric())) {
+                m.icon = None;
+            }
             for r in m.calibration.values_mut() {
                 r.max = r.max.min(100);
                 r.min = r.min.min(r.max);
@@ -598,6 +620,18 @@ mod tests {
         assert_eq!((m.custom_name.as_deref(), m.hidden, m.order), (Some("Left"), true, 1));
         s.update(&json!({"monitors": {"A": {"customName": null}}})).unwrap();
         assert_eq!(s.get().monitors["A"].custom_name, None);
+    }
+
+    #[test]
+    fn monitor_color_and_icon_are_validated() {
+        let dir = tmp("monitor-look");
+        let (s, _) = SettingsStore::load(dir.join("settings.json"));
+        s.update(&json!({"monitors": {"A": {"color": "#0067c0", "icon": "game"}}})).unwrap();
+        let m = s.get().monitors["A"].clone();
+        assert_eq!((m.color.as_deref(), m.icon.as_deref()), (Some("#0067c0"), Some("game")));
+        s.update(&json!({"monitors": {"A": {"color": "red; x", "icon": "a b"}}})).unwrap();
+        let m = s.get().monitors["A"].clone();
+        assert_eq!((m.color, m.icon), (None, None));
     }
 
     #[test]

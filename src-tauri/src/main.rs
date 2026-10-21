@@ -349,9 +349,18 @@ fn create_flyout(app: &tauri::App) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
-fn apply_backdrop(win: &WebviewWindow) -> bool {
-    window_vibrancy::apply_mica(win, None).is_ok()
-        || window_vibrancy::apply_acrylic(win, Some((24, 24, 24, 160))).is_ok()
+/// Mica/Acrylic behind the flyout, in the app's own theme: with "light" chosen on a dark system
+/// (or the reverse) a backdrop that follows the system would put light cards on a dark panel.
+fn apply_backdrop(win: &WebviewWindow, theme: &str) -> bool {
+    let dark = match theme {
+        "light" => Some(false),
+        "dark" => Some(true),
+        _ => None, // "system": follow Windows
+    };
+    let _ = window_vibrancy::clear_mica(win);
+    let _ = window_vibrancy::clear_acrylic(win);
+    let tint = if dark == Some(false) { (243, 243, 245, 160) } else { (24, 24, 24, 160) };
+    window_vibrancy::apply_mica(win, dark).is_ok() || window_vibrancy::apply_acrylic(win, Some(tint)).is_ok()
 }
 
 fn main() {
@@ -449,7 +458,7 @@ fn main() {
             tracing::info!(ms = started.elapsed().as_millis() as u64, "tray icon ready");
 
             let win = create_flyout(app)?;
-            let solid = !apply_backdrop(&win);
+            let solid = !apply_backdrop(&win, &store.get().general.theme);
             app.manage(Flyout::new(solid));
             tracing::info!(ms = started.elapsed().as_millis() as u64, "flyout window ready");
 
@@ -486,6 +495,21 @@ fn main() {
                 if last.0 != g.schedule || last.1 != g.profiles || last.2 != g.general.language {
                     *last = (g.schedule, g.profiles, g.general.language);
                     s.nudge();
+                }
+            });
+
+            // Re-tint the flyout backdrop when the theme setting changes.
+            let theme_handle = handle.clone();
+            let theme_store = store.clone();
+            let last_theme = Mutex::new(store.get().general.theme);
+            app.listen("settings-changed", move |_| {
+                let theme = theme_store.get().general.theme;
+                let mut last = last_theme.lock().unwrap();
+                if *last != theme {
+                    if let Some(w) = theme_handle.get_webview_window("flyout") {
+                        apply_backdrop(&w, &theme);
+                    }
+                    *last = theme;
                 }
             });
 

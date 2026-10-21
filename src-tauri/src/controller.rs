@@ -181,6 +181,9 @@ pub struct MonitorDto {
     /// Display name: the user's custom name if set, else the detected one.
     name: String,
     original_name: String,
+    /// Badge colour (`#rrggbb`) and icon key chosen by the user, to tell monitors apart.
+    color: Option<String>,
+    icon: Option<String>,
     features: Vec<FeatureDto>,
     /// True once the probe finished; a probed monitor with no features has no DDC/CI.
     probed: bool,
@@ -667,6 +670,8 @@ fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
                 .filter(|n| !n.trim().is_empty())
                 .unwrap_or_else(|| name.to_string()),
             original_name: name.to_string(),
+            color: ms.and_then(|m| m.color.clone()),
+            icon: ms.and_then(|m| m.icon.clone()),
             features,
             probed,
             stale,

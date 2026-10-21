@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    applyProfile, FEATURES, checkForUpdates, exportSettings, getAbout, importSettings, installUpdate, openLogs, openRepo, resetSettings, getHotkeyStatus, getMonitors, hotkeysPause, listen, PROFILE_ICONS,
+    applyProfile, FEATURES, checkForUpdates, exportSettings, getAbout, importSettings, installUpdate, openLogs, openRepo, resetSettings, getHotkeyStatus, getMonitors, hotkeysPause, listen, PROFILE_ICONS, MONITOR_ICONS, MONITOR_COLORS, badgeStyle,
     saveCurrentAsProfile, updateSettings,
     type About, type FeatureName, type Hotkey, type HotkeyAction, type MonitorDto, type Profile,
   } from "./ipc";
@@ -26,6 +26,8 @@
   let monitors = $state<MonitorDto[]>([]);
   let about = $state<About | null>(null);
   let openProfile = $state<string | null>(null);
+  let openMonitors = $state<string[]>([]);
+  const toggleMonitor = (id: string) => (openMonitors = openMonitors.includes(id) ? openMonitors.filter((x) => x !== id) : [...openMonitors, id]);
   let hkStatus = $state<Record<string, string>>({});
   let recording = $state<number | null>(null);
 
@@ -48,12 +50,63 @@
   const setLinked = (patch: Record<string, unknown>) => updateSettings({ linked: patch });
   const setMonitor = (id: string, patch: Record<string, unknown>) => updateSettings({ monitors: { [id]: patch } });
 
-  function move(i: number, dir: -1 | 1) {
-    const j = i + dir;
-    if (j < 0 || j >= monitors.length) return;
-    const ordered = [...monitors];
-    [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+  function commitOrder(ordered: MonitorDto[]) {
+    monitors = ordered; // show the new order at once; the backend echoes it back through monitors-changed
     updateSettings({ monitors: Object.fromEntries(ordered.map((m, idx) => [m.id, { order: idx }])) });
+  }
+
+  // ---- drag to reorder (pointer events: the window's native file-drop handling swallows HTML5 drag-and-drop)
+  type Drag = { from: number; to: number; dy: number; slot: number };
+  let drag = $state<Drag | null>(null);
+  let rects: { top: number; height: number }[] = [];
+
+  function dragStart(e: PointerEvent, i: number) {
+    if (e.button !== 0) return;
+    const cards = [...document.querySelectorAll<HTMLElement>(".content > .monitor")];
+    if (cards.length !== monitors.length) return;
+    rects = cards.map((c) => { const r = c.getBoundingClientRect(); return { top: r.top, height: r.height }; });
+    const gap = rects.length > 1 ? rects[1].top - (rects[0].top + rects[0].height) : 0;
+    drag = { from: i, to: i, dy: 0, slot: rects[i].height + gap };
+    const handle = e.currentTarget as HTMLElement;
+    handle.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const move = (ev: PointerEvent) => {
+      if (!drag) return;
+      const dy = ev.clientY - startY;
+      const centre = rects[drag.from].top + rects[drag.from].height / 2 + dy;
+      // Its new index is the number of other cards whose centre it has passed.
+      const to = rects.filter((r, k) => k !== drag!.from && r.top + r.height / 2 < centre).length;
+      drag = { ...drag, dy, to };
+    };
+    const end = (commit: boolean) => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", cancel);
+      handle.removeEventListener("keydown", key);
+      const d = drag;
+      drag = null;
+      if (commit && d && d.to !== d.from) {
+        const ordered = [...monitors];
+        ordered.splice(d.to, 0, ordered.splice(d.from, 1)[0]);
+        commitOrder(ordered);
+      }
+    };
+    const up = () => end(true);
+    const cancel = () => end(false);
+    const key = (ev: KeyboardEvent) => { if (ev.key === "Escape") end(false); };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", cancel);
+    handle.addEventListener("keydown", key);
+  }
+
+  /** Visual offset of card `k` while a drag is in progress: the dragged card follows the pointer, the ones it passes make room. */
+  function dragShift(k: number): number {
+    if (!drag) return 0;
+    if (k === drag.from) return drag.dy;
+    if (drag.from < drag.to && k > drag.from && k <= drag.to) return -drag.slot;
+    if (drag.to < drag.from && k >= drag.to && k < drag.from) return drag.slot;
+    return 0;
   }
 
   function toggleFeature(m: MonitorDto, feature: string, show: boolean) {
@@ -326,15 +379,37 @@
         <p class="muted">{t("set.noMonitors")}</p>
       {/if}
       {#each monitors as m, i (m.id)}
-        <div class="group monitor">
+        {@const open = openMonitors.includes(m.id)}
+        <div class="group monitor" class:dragging={drag?.from === i} class:shifting={drag !== null && drag.from !== i}
+          style:transform={drag ? `translateY(${dragShift(i)}px)` : undefined}>
           <div class="mhead">
-            <span class="badge" aria-hidden="true">{m.number}</span>
+            <button class="icon grip" title={t("set.drag")} aria-label={t("set.drag")} onpointerdown={(e) => dragStart(e, i)}>&#xE700;</button>
+            <span class="badge" class:icon={m.icon && MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{(m.icon && MONITOR_ICONS[m.icon]) || m.number}</span>
             <input class="name" type="text" value={m.name} placeholder={m.originalName} aria-label={t("set.monitorNameAria", { name: m.originalName })}
               onchange={(e) => rename(m, e.currentTarget.value)} />
             <span class="order">
-              <button class="icon" title={t("set.up")} aria-label={t("set.moveUp")} disabled={i === 0} onclick={() => move(i, -1)}></button>
-              <button class="icon" title={t("set.down")} aria-label={t("set.moveDown")} disabled={i === monitors.length - 1} onclick={() => move(i, 1)}></button>
+              <button class="icon" title={open ? t("set.collapse") : t("set.expand")} aria-label={t("set.monitorSettingsAria", { name: m.name })} aria-expanded={open}
+                onclick={() => toggleMonitor(m.id)}>{open ? "" : ""}</button>
             </span>
+          </div>
+          {#if open}
+          <div class="features icons" role="radiogroup" aria-label={t("set.monitorColorAria", { name: m.name })}>
+            <b>{t("set.monitorColor")}</b>
+            <button class="swatch none" class:on={!m.color} role="radio" aria-checked={!m.color} aria-label={t("set.monitorDefault")} title={t("set.monitorDefault")}
+              onclick={() => setMonitor(m.id, { color: null })}></button>
+            {#each MONITOR_COLORS as c (c)}
+              <button class="swatch" class:on={m.color === c} role="radio" aria-checked={m.color === c} aria-label={c} style:background={c}
+                onclick={() => setMonitor(m.id, { color: c })}></button>
+            {/each}
+          </div>
+          <div class="features icons" role="radiogroup" aria-label={t("set.monitorIconAria", { name: m.name })}>
+            <b>{t("set.icon")}</b>
+            <button class="icon pick num" class:on={!m.icon} role="radio" aria-checked={!m.icon} aria-label={t("set.monitorIconNumber")} title={t("set.monitorIconNumber")}
+              onclick={() => setMonitor(m.id, { icon: null })}>{m.number}</button>
+            {#each Object.entries(MONITOR_ICONS) as [key, glyph] (key)}
+              <button class="icon pick" class:on={m.icon === key} role="radio" aria-checked={m.icon === key} aria-label={key}
+                onclick={() => setMonitor(m.id, { icon: key })}>{glyph}</button>
+            {/each}
           </div>
           <label class="line">
             <span><b>{t("set.showInFlyout")}</b></span>
@@ -368,6 +443,7 @@
             {/each}
           {:else if m.probed}
             <p class="muted">{t("set.noDdc")}</p>
+          {/if}
           {/if}
         </div>
       {/each}

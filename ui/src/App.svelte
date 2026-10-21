@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import {
-    applyProfile, fitFlyout, getMonitors, hideFlyout, isSolid, listen, openSettings, PROFILE_ICONS,
+    applyProfile, fitFlyout, getMonitors, hideFlyout, isSolid, listen, openSettings, PROFILE_ICONS, MONITOR_ICONS, badgeStyle,
     getScheduleState, refreshMonitors, reloadValues, resumeSchedule, saveCurrentAsProfile, setLinkedValue, setValue,
     takeNotice, uncalibrate, updateSettings,
     type FeatureName, type FeatureDto, type MonitorDto, type ScheduleState, type ValueChanged,
@@ -9,7 +9,6 @@
   import { app, initSettings } from "./store.svelte";
   import Slider from "./Slider.svelte";
   import { t } from "./i18n.svelte";
-  import Mark from "./Mark.svelte";
 
   let monitors = $state<MonitorDto[]>([]);
   let scanning = $state(true);
@@ -150,10 +149,6 @@
 <svelte:window onkeydown={onkey} />
 
 <main bind:this={root} class:shown class:solid class:alt class:always={app.settings?.general.showValues === "always"}>
-  <div class="flyout-head stagger" style="--i: 0">
-    <Mark />
-    <h1>Lumza</h1>
-  </div>
   {#if sched?.enabled && sched.paused}
     <section class="banner stagger" style="--i: 1" role="status">
       <span>{sched.pausedUntil ? t("app.schedulePausedUntil", { time: sched.pausedUntil }) : t("app.schedulePaused")}</span>
@@ -199,7 +194,7 @@
       {#if m.features.length === 0 || shownRows.length > 0}
         <section class="card stagger" style="--i: {idx + 1 + (linkedFeatures.length > 0 ? 1 : 0)}" aria-label={m.name}>
           <header>
-            <span class="badge" aria-hidden="true">{m.number}</span>
+            <span class="badge" class:icon={m.icon && MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{(m.icon && MONITOR_ICONS[m.icon]) || m.number}</span>
             <span class="name">{m.name}</span>
           </header>
           {#if !m.probed && m.features.length === 0}

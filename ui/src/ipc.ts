@@ -6,6 +6,7 @@ export interface FeatureDto { feature: FeatureName; percent: number }
 export interface CalibrationDto { feature: FeatureName; min: number; max: number }
 export interface MonitorDto {
   id: string; number: number; name: string; originalName: string;
+  color: string | null; icon: string | null;
   features: FeatureDto[]; probed: boolean; stale: boolean; hidden: boolean; hiddenFeatures: string[];
   excludedFromLink: boolean; calibration: CalibrationDto[];
 }
@@ -14,7 +15,7 @@ export interface ValueChanged { id: string; feature: FeatureName; percent: numbe
 
 export interface Range { min: number; max: number }
 export interface MonitorSettings {
-  customName: string | null; hidden: boolean; order: number; hiddenFeatures: string[];
+  customName: string | null; color: string | null; icon: string | null; hidden: boolean; order: number; hiddenFeatures: string[];
   calibration: Partial<Record<FeatureName, Range>>; excludedFromLink: boolean;
 }
 export interface Profile {
@@ -80,7 +81,20 @@ export const PROFILE_ICONS: Record<string, string> = {
   sun: "", moon: "", game: "", eye: "", video: "", star: "",
 };
 
-export const getMonitors = () => invoke<Snapshot>("get_monitors");
+/** Badge colours offered for monitors (all readable with white text). */
+export const MONITOR_COLORS = ["#c42b1c", "#d4660a", "#8a6d00", "#107c10", "#038387", "#0067c0", "#6b4fbb", "#c239b3"];
+
+/** Fluent glyphs offered as monitor icons; no icon shows the monitor number. */
+export const MONITOR_ICONS: Record<string, string> = {
+  home: "", work: "", game: "", tv: "", video: "", mail: "",
+  heart: "", star: "", pin: "", globe: "", camera: "", music: "",
+};
+
+/** Style for a monitor badge: the chosen colour (if any) with white text. */
+export const badgeStyle = (m: { color: string | null }) =>
+  m.color ? `background:${m.color};color:#fff` : undefined;
+
+export const getMonitors =() => invoke<Snapshot>("get_monitors");
 export const refreshMonitors = () => invoke<void>("refresh_monitors");
 export const reloadValues = () => invoke<void>("reload_values");
 export const setValue = (monitorId: string, feature: FeatureName, value: number) =>

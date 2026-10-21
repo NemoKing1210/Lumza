@@ -114,8 +114,12 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .monitor { padding-bottom: 4px; }
 .mhead { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
 .mhead .name { flex: 1; font-weight: 600; }
+button.icon.grip { cursor: grab; touch-action: none; width: 24px; margin-left: -8px; color: var(--fg2); }
+.monitor.dragging { position: relative; z-index: 1; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); cursor: grabbing; transition: none; }
+.monitor.dragging button.icon.grip { cursor: grabbing; }
+.monitor.shifting { transition: transform 150ms var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { .monitor.shifting { transition: none; } }
 .order { display: flex; gap: 2px; }
-.order button.icon:disabled { opacity: .35; cursor: default; }
 .features { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 12px 16px; border-top: 1px solid var(--stroke); }
 .check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .check input { accent-color: var(--accent); width: 16px; height: 16px; }
@@ -134,7 +138,16 @@ input[type="number"]:focus-visible { outline: 2px solid var(--accent); }
 .range { display: flex; align-items: center; gap: 6px; }
 .line.calib { border-top: 1px solid var(--stroke); }
 .glyph.big-glyph { font-size: 20px; width: 28px; text-align: center; font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
-.profile-card .features.icons { gap: 4px 6px; }
+.profile-card .features.icons, .monitor .features.icons { gap: 4px 6px; }
+.monitor .features.icons b { min-width: 60px; }
+button.icon.pick.num { font-family: inherit; font-size: 13px; font-weight: 600; }
+
+/* monitor colour / icon */
+.badge.icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 13px; font-weight: 400; }
+button.swatch { width: 22px; height: 22px; padding: 0; margin: 6px; border-radius: 50%; border: 2px solid transparent; box-shadow: 0 0 0 1px var(--stroke); }
+button.swatch.on { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--accent); }
+button.swatch.none { background: linear-gradient(135deg, var(--track) 45%, var(--accent) 45%); }
+@media (forced-colors: active) { button.swatch.on { outline: 2px solid Highlight; } }
 button.icon.pick.on { background: var(--accent); color: var(--on-accent); }
 .pvalues { display: flex; flex-direction: column; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--stroke); }
 .pvrow { display: grid; grid-template-columns: 150px 1fr 76px; align-items: center; gap: 12px; }
@@ -207,10 +220,6 @@ button.link { background: transparent; border: none; color: var(--accent); paddi
 /* ====================== Tokenza look ====================== */
 h1 { font-size: 15px; font-weight: 700; }
 .content h2 { font-size: 26px; font-weight: 600; margin-bottom: 8px; }
-
-/* Flyout header */
-.flyout-head { display: flex; align-items: center; gap: 8px; }
-.flyout-head h1 { flex: 1; }
 
 /* Entrance: header, cards and footer rise in one after another. */
 @keyframes rise-a { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
