@@ -8,7 +8,7 @@ import de from "../../locales/de.json";
 import fr from "../../locales/fr.json";
 import pt from "../../locales/pt.json";
 import zh from "../../locales/zh.json";
-import { format, i18n, setLang, t } from "./i18n.svelte";
+import { format, i18n, setLang, setSystemLang, t } from "./i18n.svelte";
 import { uncalibrate } from "./ipc";
 
 const OTHERS: Record<string, Record<string, string>> = { ru, es, de, fr, pt, zh };
@@ -66,6 +66,17 @@ describe("t()", () => {
     expect(t("set.profileDefault", { n: 3 })).toBe("Profil 3");
     setLang("xx");
     expect(i18n.lang).toBe("en");
+  });
+
+  it("follows the system language in auto mode, English when it is unsupported", () => {
+    setSystemLang("fr");
+    setLang("auto");
+    expect(i18n.lang).toBe("fr");
+    setSystemLang("ja");
+    setLang("auto");
+    expect(i18n.lang).toBe("en");
+    setLang("ru");
+    expect(i18n.lang).toBe("ru");
   });
 
   it("falls back to the key for unknown strings", () => {

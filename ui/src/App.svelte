@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import {
     applyProfile, fitFlyout, getMonitors, hideFlyout, isSolid, listen, openSettings, PROFILE_ICONS, MONITOR_ICONS, badgeStyle,
-    getScheduleState, refreshMonitors, reloadValues, resumeSchedule, saveCurrentAsProfile, setLinkedValue, setValue,
+    getScheduleState, refreshMonitors, reloadValues, resumeSchedule, saveCurrentAsProfile, setHdr, setLinkedValue, setValue,
     takeNotice, uncalibrate, updateSettings,
     type FeatureName, type FeatureDto, type MonitorDto, type ScheduleState, type ValueChanged,
   } from "./ipc";
@@ -15,6 +15,7 @@
   let shown = $state(false);
   let alt = $state(false); // alternates so the entrance animation restarts on every show
   let solid = $state(false);
+  let hdrEpoch = $state(0);
   let toast = $state("");
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let root: HTMLElement;
@@ -125,6 +126,7 @@
     const un = Promise.all([
       listen<{ monitors: MonitorDto[]; scanning: boolean }>("monitors-changed", (e) => {
         monitors = e.payload.monitors; scanning = e.payload.scanning;
+        hdrEpoch++; // a switch the user flipped may disagree with Windows' answer, which can be unchanged
       }),
       listen<ValueChanged>("values-changed", (e) => {
         const f = monitors.find((m) => m.id === e.payload.id)?.features.find((x) => x.feature === e.payload.feature);
@@ -132,6 +134,7 @@
       }),
       listen<ScheduleState>("schedule-state", (e) => (sched = e.payload)),
       listen("write-failed", () => showToast(t("app.writeFailed"))),
+      listen("hdr-failed", () => showToast(t("app.hdrFailed"))),
       listen("flyout-shown", () => { shown = false; alt = !alt; setTimeout(() => (shown = true), 30); reloadValues(); }),
       listen("flyout-hidden", () => { shown = false; showProfiles = false; adding = false; appliedId = null; previewId = null; }),
     ]);
@@ -213,6 +216,17 @@
                 send={(v) => setValue(m.id, f.feature, v)}
               />
             {/each}
+          {/if}
+          {#if m.hdr}
+            <!-- Re-created on every snapshot: Svelte skips an unchanged `checked`, which would leave a flipped switch wrong. -->
+            {#key hdrEpoch}
+              <label class="hdr">
+                <span>{t("app.hdr")}</span>
+                <input type="checkbox" class="switch" role="switch" aria-label="{t('app.hdr')} {m.name}"
+                  checked={m.hdr.enabled} disabled={m.stale}
+                  onchange={(e) => setHdr(m.id, e.currentTarget.checked)} />
+              </label>
+            {/key}
           {/if}
         </section>
       {/if}

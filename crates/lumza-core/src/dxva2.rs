@@ -19,7 +19,7 @@ use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, H
 
 use crate::backend::{DisplayBackend, MonitorPort, PortSource};
 use crate::error::{Error, Result};
-use crate::types::{Connection, MonitorId, MonitorInfo, VcpValue};
+use crate::types::{Connection, HdrState, MonitorId, MonitorInfo, VcpValue};
 
 /// DDC/CI timing (spec §6): ≥50 ms after a write, ≥40 ms after a read.
 #[derive(Debug, Clone, Copy)]
@@ -139,26 +139,35 @@ struct Target {
     device_path: String,
 }
 
-fn wide_to_string(w: &[u16]) -> String {
+pub(crate) fn wide_to_string(w: &[u16]) -> String {
     let end = w.iter().position(|&c| c == 0).unwrap_or(w.len());
     String::from_utf16_lossy(&w[..end])
 }
 
-fn display_config_targets() -> HashMap<String, Target> {
-    let mut map = HashMap::new();
+/// Active display paths (one per attached monitor), or `None` when Windows refuses the query.
+pub(crate) fn active_paths() -> Option<Vec<DISPLAYCONFIG_PATH_INFO>> {
     unsafe {
         let (mut np, mut nm) = (0u32, 0u32);
         if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut np, &mut nm).0 != 0 {
-            return map;
+            return None;
         }
         let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); np as usize];
         let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); nm as usize];
         if QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &mut np, paths.as_mut_ptr(), &mut nm, modes.as_mut_ptr(), None).0
             != 0
         {
-            return map;
+            return None;
         }
-        for p in &paths[..np as usize] {
+        paths.truncate(np as usize);
+        Some(paths)
+    }
+}
+
+fn display_config_targets() -> HashMap<String, Target> {
+    let mut map = HashMap::new();
+    let Some(paths) = active_paths() else { return map };
+    unsafe {
+        for p in &paths {
             let mut src = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
                 header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
                     r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
@@ -354,6 +363,14 @@ impl PortSource for Dxva2Backend {
 
     fn scan(&mut self) -> Result<Vec<(MonitorInfo, Box<dyn MonitorPort>)>> {
         Ok(scan_raw(self.timing)?.into_iter().map(|(i, p)| (i, Box::new(p) as Box<dyn MonitorPort>)).collect())
+    }
+
+    fn hdr_state(&mut self, device: &str) -> Option<HdrState> {
+        crate::hdr::query(device)
+    }
+
+    fn set_hdr(&mut self, device: &str, on: bool) -> Result<()> {
+        crate::hdr::set(device, on)
     }
 }
 

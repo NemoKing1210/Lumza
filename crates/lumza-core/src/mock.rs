@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::backend::{DisplayBackend, MonitorPort, PortSource};
 use crate::error::{Error, Result};
-use crate::types::{Connection, MonitorId, MonitorInfo, VcpValue};
+use crate::types::{Connection, HdrState, MonitorId, MonitorInfo, VcpValue};
 
 #[derive(Debug, Clone)]
 pub struct MockMonitor {
@@ -24,11 +24,13 @@ pub struct MockBackend {
     pub latency: Duration,
     /// Log of every successful write: (monitor id, code, value).
     pub writes: Vec<(MonitorId, u8, u32)>,
+    /// HDR state by GDI device name; displays without an entry have no HDR.
+    pub hdr: HashMap<String, HdrState>,
 }
 
 impl MockBackend {
     pub fn new(monitors: Vec<MockMonitor>) -> Self {
-        Self { monitors, latency: Duration::ZERO, writes: Vec::new() }
+        Self { monitors, latency: Duration::ZERO, writes: Vec::new(), hdr: HashMap::new() }
     }
 
     /// Two monitors resembling the reference hardware from the spec.
@@ -46,10 +48,12 @@ impl MockBackend {
             values: HashMap::from([(0x10, 50), (0x12, 50), (0x62, 25)]),
             broken: vec![],
         };
-        Self::new(vec![
+        let mut b = Self::new(vec![
             mk(1, "GSM5B09-1234", "LG ULTRAGEAR", "(prot(monitor)type(lcd)model(LG)vcp(10 12 62)mccs_ver(2.2))"),
             mk(2, "AOC2702-5678", "AOC 27G2G3", "(prot(monitor)type(lcd)model(27G2G3)vcp(10 12)mccs_ver(2.2))"),
-        ])
+        ]);
+        b.hdr.insert(r"\\.\DISPLAY1".into(), HdrState { supported: true, enabled: false });
+        b
     }
 
     fn find(&mut self, id: &MonitorId) -> Result<&mut MockMonitor> {
@@ -135,6 +139,20 @@ impl PortSource for SharedMock {
             })
             .collect())
     }
+
+    fn hdr_state(&mut self, device: &str) -> Option<HdrState> {
+        self.0.lock().unwrap().hdr.get(device).copied()
+    }
+
+    fn set_hdr(&mut self, device: &str, on: bool) -> Result<()> {
+        match self.0.lock().unwrap().hdr.get_mut(device) {
+            Some(s) if s.supported => {
+                s.enabled = on;
+                Ok(())
+            }
+            _ => Err(Error::Invalid(format!("{device} has no HDR"))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -165,5 +183,31 @@ mod tests {
     fn unknown_monitor() {
         let mut b = MockBackend::demo();
         assert!(matches!(b.get_vcp(&"nope".to_string(), 0x10), Err(Error::NotFound(_))));
+    }
+
+    fn demo_source() -> SharedMock {
+        SharedMock(Arc::new(Mutex::new(MockBackend::demo())))
+    }
+
+    #[test]
+    fn hdr_demo_first_monitor_supports_hdr_second_does_not() {
+        let mut s = demo_source();
+        assert_eq!(s.hdr_state(r"\\.\DISPLAY1"), Some(HdrState { supported: true, enabled: false }));
+        assert_eq!(s.hdr_state(r"\\.\DISPLAY2"), None);
+    }
+
+    #[test]
+    fn hdr_set_roundtrip() {
+        let mut s = demo_source();
+        s.set_hdr(r"\\.\DISPLAY1", true).unwrap();
+        assert!(s.hdr_state(r"\\.\DISPLAY1").unwrap().enabled);
+        s.set_hdr(r"\\.\DISPLAY1", false).unwrap();
+        assert!(!s.hdr_state(r"\\.\DISPLAY1").unwrap().enabled);
+    }
+
+    #[test]
+    fn hdr_set_on_unsupported_device_errors() {
+        let mut s = demo_source();
+        assert!(matches!(s.set_hdr(r"\\.\DISPLAY2", true), Err(Error::Invalid(_))));
     }
 }

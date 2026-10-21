@@ -4,11 +4,14 @@ import { listen } from "@tauri-apps/api/event";
 export type FeatureName = "brightness" | "contrast" | "volume";
 export interface FeatureDto { feature: FeatureName; percent: number }
 export interface CalibrationDto { feature: FeatureName; min: number; max: number }
+export interface HdrDto { enabled: boolean }
 export interface MonitorDto {
   id: string; number: number; name: string; originalName: string;
   color: string | null; icon: string | null;
   features: FeatureDto[]; probed: boolean; stale: boolean; hidden: boolean; hiddenFeatures: string[];
   excludedFromLink: boolean; calibration: CalibrationDto[];
+  /** Present only when the monitor supports HDR. */
+  hdr: HdrDto | null;
 }
 export interface Snapshot { monitors: MonitorDto[]; scanning: boolean }
 export interface ValueChanged { id: string; feature: FeatureName; percent: number }
@@ -102,6 +105,7 @@ export const refreshMonitors = () => invoke<void>("refresh_monitors");
 export const reloadValues = () => invoke<void>("reload_values");
 export const setValue = (monitorId: string, feature: FeatureName, value: number) =>
   invoke<void>("set_value", { monitorId, feature, value });
+export const setHdr = (monitorId: string, on: boolean) => invoke<void>("set_hdr", { monitorId, on });
 export const setLinkedValue = (feature: FeatureName, value: number) =>
   invoke<void>("set_linked_value", { feature, value });
 export const applyProfile = (id: string) => invoke<boolean>("apply_profile", { id });
@@ -128,6 +132,8 @@ export const openRepo = () => invoke<void>("open_repo");
 export const exportSettings = () => invoke<boolean>("export_settings");
 export const importSettings = () => invoke<boolean>("import_settings");
 export const resetSettings = () => invoke<void>("reset_settings");
+/** The supported UI language matching the Windows language ("en" when none does). */
+export const getSystemLanguage = () => invoke<string>("get_system_language");
 export const openLogs = () => invoke<void>("open_logs");
 export const getAbout = () => invoke<About>("about");
 

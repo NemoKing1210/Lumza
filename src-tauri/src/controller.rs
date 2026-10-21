@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use lumza_core::link;
 use lumza_core::scale::percent_to_raw;
 use lumza_core::store::{Cache, CachedFeature, CachedMonitor, Profile, Range, Settings, SettingsStore};
-use lumza_core::{Feature, MonitorInfo, MonitorPort, PortSource, VcpValue};
+use lumza_core::{Feature, HdrState, MonitorInfo, MonitorPort, PortSource, VcpValue};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -150,6 +150,9 @@ struct State {
     monitors: Vec<Mon>,
     /// Last known monitors from `cache.json`, shown (read-only) until the first scan lands.
     placeholder: Vec<CachedMonitor>,
+    /// HDR state by monitor id, only for monitors Windows could read it for. Not DDC/CI, so
+    /// it lives outside `Mon` and the workers.
+    hdr: HashMap<String, HdrState>,
 }
 
 /// Cache writes are delayed so a slider drag produces one disk write, not hundreds.
@@ -194,6 +197,14 @@ pub struct MonitorDto {
     excluded_from_link: bool,
     /// Calibration ranges for linked sliders, only for features the user changed.
     calibration: Vec<CalibrationDto>,
+    /// Present only when the monitor supports HDR.
+    hdr: Option<HdrDto>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HdrDto {
+    enabled: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -381,6 +392,7 @@ impl Controller {
         let snap = snapshot_of(&st, &self.settings.get());
         drop(st);
         let _ = self.app.emit("monitors-changed", snap);
+        self.refresh_hdr(false);
     }
 
     fn on_event(self: &Arc<Self>, generation: u64, id: &str, ev: Event) {
@@ -436,11 +448,58 @@ impl Controller {
     }
 
     /// Re-read current values in the background (monitor buttons may have changed them).
-    pub fn reload_values(&self) {
-        let st = self.state.lock().unwrap();
-        for m in st.monitors.iter().filter(|m| m.probed) {
-            m.worker.read();
+    pub fn reload_values(self: &Arc<Self>) {
+        {
+            let st = self.state.lock().unwrap();
+            for m in st.monitors.iter().filter(|m| m.probed) {
+                m.worker.read();
+            }
         }
+        // HDR may have been toggled in Windows (Win+Alt+B); DisplayConfig stays off the UI thread.
+        let this = self.clone();
+        std::thread::Builder::new().name("hdr".into()).spawn(move || this.refresh_hdr(false)).expect("spawn hdr");
+    }
+
+    /// Re-read every monitor's HDR state from Windows and push a snapshot when it changed.
+    /// `force` pushes it anyway, so a switch whose change was refused snaps back.
+    fn refresh_hdr(&self, force: bool) {
+        let devices: Vec<(String, String)> = {
+            let st = self.state.lock().unwrap();
+            st.monitors.iter().map(|m| (m.info.id.clone(), m.info.device.clone())).collect()
+        };
+        let results: Vec<(String, Option<HdrState>)> = {
+            let mut source = self.source.lock().unwrap();
+            devices.into_iter().map(|(id, device)| (id, source.hdr_state(&device))).collect()
+        };
+        let mut st = self.state.lock().unwrap();
+        let changed = merge_hdr(&mut st.hdr, results);
+        if changed || force {
+            let snap = snapshot_of(&st, &self.settings.get());
+            drop(st);
+            let _ = self.app.emit("monitors-changed", snap);
+        }
+    }
+
+    /// Switch HDR on or off for one monitor. Unknown monitors are ignored (hot-unplug).
+    /// A refused change raises `hdr-failed`; either way the real state is pushed back.
+    pub fn set_hdr(self: &Arc<Self>, id: &str, on: bool) {
+        let Some(device) =
+            self.state.lock().unwrap().monitors.iter().find(|m| m.info.id == id).map(|m| m.info.device.clone())
+        else {
+            return;
+        };
+        let this = self.clone();
+        std::thread::Builder::new()
+            .name("hdr".into())
+            .spawn(move || {
+                let res = this.source.lock().unwrap().set_hdr(&device, on);
+                if let Err(e) = res {
+                    tracing::warn!(error = %e, "HDR change failed");
+                    let _ = this.app.emit("hdr-failed", ());
+                }
+                this.refresh_hdr(true);
+            })
+            .expect("spawn hdr");
     }
 
     /// Set one feature of one monitor (0–100 %). Unknown monitors are ignored: a
@@ -646,6 +705,15 @@ impl Controller {
     }
 }
 
+/// Replace the HDR map with fresh readings (monitors that gave none are dropped).
+/// Returns whether anything changed.
+fn merge_hdr(map: &mut HashMap<String, HdrState>, results: Vec<(String, Option<HdrState>)>) -> bool {
+    let fresh: HashMap<String, HdrState> = results.into_iter().filter_map(|(id, s)| Some((id, s?))).collect();
+    let changed = *map != fresh;
+    *map = fresh;
+    changed
+}
+
 fn range_of(settings: &Settings, id: &str, f: Feature) -> Range {
     settings.monitors.get(id).and_then(|m| m.calibration.get(f.name())).copied().unwrap_or_default()
 }
@@ -686,6 +754,7 @@ fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
                         .collect()
                 })
                 .unwrap_or_default(),
+            hdr: st.hdr.get(id).filter(|h| h.supported).map(|h| HdrDto { enabled: h.enabled }),
         }
     };
     let mut monitors: Vec<MonitorDto> = if st.monitors.is_empty() && !st.placeholder.is_empty() {
@@ -714,4 +783,37 @@ fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
     };
     monitors.sort_by_key(|m| (settings.monitors.get(&m.id).map_or(0, |s| s.order), m.number));
     Snapshot { scanning: st.scanning, monitors }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ON: HdrState = HdrState { supported: true, enabled: true };
+    const OFF: HdrState = HdrState { supported: true, enabled: false };
+
+    fn hdr_of(entries: &[(&str, HdrState)]) -> HashMap<String, HdrState> {
+        entries.iter().map(|(id, s)| (id.to_string(), *s)).collect()
+    }
+
+    #[test]
+    fn merge_hdr_reports_change_then_no_change() {
+        let mut map = HashMap::new();
+        assert!(merge_hdr(&mut map, vec![("a".into(), Some(OFF))]));
+        assert!(!merge_hdr(&mut map, vec![("a".into(), Some(OFF))]));
+    }
+
+    #[test]
+    fn merge_hdr_drops_none_and_missing() {
+        let mut map = hdr_of(&[("a", OFF), ("b", OFF)]);
+        assert!(merge_hdr(&mut map, vec![("a".into(), None)]));
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn merge_hdr_detects_enabled_flip() {
+        let mut map = hdr_of(&[("a", OFF)]);
+        assert!(merge_hdr(&mut map, vec![("a".into(), Some(ON))]));
+        assert_eq!(map["a"], ON);
+    }
 }

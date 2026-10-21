@@ -22,6 +22,7 @@ pub const SCHEMA_VERSION: u32 = 4;
 #[serde(rename_all = "camelCase", default)]
 pub struct General {
     pub autostart: bool,
+    /// A `locales/<code>.json` code, or "auto" to follow the system language (English if unsupported).
     pub language: String,
     /// "system" | "light" | "dark"
     pub theme: String,
@@ -37,7 +38,7 @@ impl Default for General {
     fn default() -> Self {
         Self {
             autostart: true,
-            language: "en".into(),
+            language: "auto".into(),
             theme: "system".into(),
             step: 2,
             show_values: "always".into(),
@@ -315,8 +316,8 @@ impl Settings {
         if !["system", "light", "dark"].contains(&self.general.theme.as_str()) {
             self.general.theme = "system".into();
         }
-        if !LANGUAGES.contains(&self.general.language.as_str()) {
-            self.general.language = "en".into();
+        if self.general.language != "auto" && !LANGUAGES.contains(&self.general.language.as_str()) {
+            self.general.language = "auto".into();
         }
         if !["hover", "always"].contains(&self.general.show_values.as_str()) {
             self.general.show_values = "always".into();
@@ -640,6 +641,11 @@ mod tests {
         let (s, _) = SettingsStore::load(dir.join("settings.json"));
         let r = s.update(&json!({"general": {"step": 99, "theme": "neon"}})).unwrap();
         assert_eq!((r.general.step, r.general.theme.as_str()), (20, "system"));
+        assert_eq!(s.get().general.language, "auto", "language follows the system by default");
+        let r = s.update(&json!({"general": {"language": "de"}})).unwrap();
+        assert_eq!(r.general.language, "de");
+        let r = s.update(&json!({"general": {"language": "klingon"}})).unwrap();
+        assert_eq!(r.general.language, "auto");
         assert!(s.update(&json!({"general": {"autostart": "yes"}})).is_err());
         assert!(s.get().general.autostart, "failed patch must not change anything");
     }

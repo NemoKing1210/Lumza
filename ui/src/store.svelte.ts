@@ -1,5 +1,5 @@
-import { getSettings, listen, type Settings } from "./ipc";
-import { setLang } from "./i18n.svelte";
+import { getSettings, getSystemLanguage, listen, type Settings } from "./ipc";
+import { setLang, setSystemLang } from "./i18n.svelte";
 
 /** Settings shared by every window; kept in sync through the `settings-changed` event. */
 export const app = $state<{ settings: Settings | null }>({ settings: null });
@@ -12,6 +12,7 @@ function applyTheme(s: Settings) {
 }
 
 export async function initSettings() {
+  setSystemLang(await getSystemLanguage().catch(() => "en"));
   app.settings = await getSettings();
   applyTheme(app.settings);
   await listen<Settings>("settings-changed", (e) => {

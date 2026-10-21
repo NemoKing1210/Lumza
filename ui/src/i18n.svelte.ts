@@ -29,9 +29,10 @@ function detectLang(): Lang {
   return isLang(code) ? code : "en";
 }
 
-export const i18n = $state<{ lang: Lang }>({
+export const i18n = $state<{ lang: Lang; system: Lang }>({
   // Until settings arrive, follow the browser language so the first paint is not in the wrong one.
   lang: detectLang(),
+  system: detectLang(),
 });
 
 export function format(template: string, params?: Record<string, string | number>): string {
@@ -43,7 +44,13 @@ export function t(key: string, params?: Record<string, string | number>): string
   return format(dicts[i18n.lang]?.[key] ?? dicts.en[key] ?? key, params);
 }
 
+/** The language the system reports (from the backend, so the UI agrees with the tray); English if unsupported. */
+export function setSystemLang(lang: string) {
+  i18n.system = isLang(lang) ? lang : "en";
+}
+
+/** `lang` is a language code, or "auto" for the system language. */
 export function setLang(lang: string) {
-  i18n.lang = isLang(lang) ? lang : "en";
+  i18n.lang = lang === "auto" ? i18n.system : isLang(lang) ? lang : "en";
   if (typeof document !== "undefined") document.documentElement.lang = i18n.lang;
 }

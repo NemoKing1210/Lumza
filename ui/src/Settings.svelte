@@ -352,6 +352,7 @@
         <label class="line">
           <span><b>{t("set.language")}</b><small>{t("set.languageHint")}</small></span>
           <select value={g.language} onchange={(e) => setGeneral({ language: e.currentTarget.value })}>
+            <option value="auto">{t("set.langAuto")}</option>
             {#each LANGUAGES as l (l.code)}
               <option value={l.code}>{l.name}</option>
             {/each}

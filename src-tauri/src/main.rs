@@ -86,6 +86,11 @@ fn set_value(app: AppHandle, c: State<Arc<Controller>>, monitor_id: String, feat
 }
 
 #[tauri::command]
+fn set_hdr(c: State<Arc<Controller>>, monitor_id: String, on: bool) {
+    c.set_hdr(&monitor_id, on);
+}
+
+#[tauri::command]
 fn fit_flyout(win: WebviewWindow, f: State<Flyout>, height: f64) {
     f.fit(&win, height);
 }
@@ -171,6 +176,11 @@ fn reset_settings(app: AppHandle, s: State<Arc<SettingsStore>>, c: State<Arc<Con
     after_settings_change(&app, &c, &old, &new);
     c.rescan(); // re-creates the built-in profiles for the monitors that are connected
     Ok(())
+}
+
+#[tauri::command]
+fn get_system_language() -> &'static str {
+    i18n::system_language()
 }
 
 #[tauri::command]
@@ -383,6 +393,7 @@ fn main() {
             refresh_monitors,
             reload_values,
             set_value,
+            set_hdr,
             fit_flyout,
             hide_flyout,
             is_solid,
@@ -406,6 +417,7 @@ fn main() {
             export_settings,
             import_settings,
             reset_settings,
+            get_system_language,
             open_logs,
             about
         ])
@@ -424,10 +436,6 @@ fn main() {
 
             let (store, outcome) = SettingsStore::load(paths.settings);
             let store = Arc::new(store);
-            // First run: follow the Windows UI language (Russian or English).
-            if outcome == LoadOutcome::Fresh {
-                let _ = store.update(&serde_json::json!({ "general": { "language": i18n::system_language() } }));
-            }
             let notice = match outcome {
                 LoadOutcome::Recovered(backup) => {
                     tracing::warn!(backup = %backup.display(), "settings.json was corrupt");

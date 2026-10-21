@@ -15,7 +15,9 @@ pub mod types;
 
 #[cfg(windows)]
 pub mod dxva2;
+#[cfg(windows)]
+pub mod hdr;
 
 pub use backend::{DisplayBackend, MonitorPort, PortSource};
 pub use error::{Error, Result};
-pub use types::{Feature, MonitorId, MonitorInfo, VcpValue};
+pub use types::{Feature, HdrState, MonitorId, MonitorInfo, VcpValue};

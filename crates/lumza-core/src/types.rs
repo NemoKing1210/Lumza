@@ -67,6 +67,14 @@ impl VcpValue {
     }
 }
 
+/// HDR as Windows reports it for one display. Not a DDC/CI feature: it comes from
+/// the DisplayConfig advanced-colour API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HdrState {
+    pub supported: bool,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Connection {
     Ddc,

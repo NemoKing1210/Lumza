@@ -25,8 +25,9 @@ fn dicts() -> &'static Vec<(&'static str, Dict)> {
     })
 }
 
-/// Text for `key` in `lang`; falls back to English, then to the key itself.
+/// Text for `key` in `lang` ("auto" follows the system language); falls back to English, then to the key itself.
 pub fn t(lang: &str, key: &str) -> String {
+    let lang = if lang == "auto" { system_language() } else { lang };
     let d = dicts();
     d.iter()
         .find(|(l, _)| *l == lang)

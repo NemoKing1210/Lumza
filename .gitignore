@@ -6,3 +6,6 @@ src-tauri/gen/
 .DS_Store
 # Updater signing keys must never be committed
 *.key
+
+# Local planning docs
+/docs/
