@@ -65,7 +65,7 @@ pub struct MonitorSettings {
     pub custom_name: Option<String>,
     /// Badge colour as `#rrggbb`; `None` uses the accent colour.
     pub color: Option<String>,
-    /// Badge icon key (see the UI's `MONITOR_ICONS`); `None` shows the monitor number.
+    /// Badge icon key (see the UI's `MONITOR_ICONS`); `None` (the default) hides the badge, `"number"` shows the monitor number.
     pub icon: Option<String>,
     pub hidden: bool,
     pub order: i32,

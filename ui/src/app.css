@@ -337,7 +337,8 @@ main > .card { gap: 4px; padding: 12px 16px 8px; border-radius: 8px; background:
 main > .card:hover { box-shadow: none; border-color: var(--stroke-card); }
 main > .card > header { gap: 10px; padding: 0 0 6px; border-bottom: 0; }
 main > .card .name { font-size: 14px; font-weight: 600; letter-spacing: 0; }
-.badge { min-width: 22px; height: 22px; border-radius: 4px; background: var(--accent); box-shadow: none; font-size: 12px; }
+.badge { --b: var(--accent); min-width: 22px; height: 22px; border-radius: 4px; box-shadow: none; font-size: 12px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--b) 78%, #fff), color-mix(in srgb, var(--b) 85%, #000)); }
 .badge.link { border-radius: 4px; }
 
 /* Row: plain Fluent glyph, slider, caption-sized value. */

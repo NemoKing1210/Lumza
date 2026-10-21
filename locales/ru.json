@@ -184,6 +184,7 @@
   "set.monitorDefault": "По умолчанию",
   "set.monitorIconAria": "Иконка монитора {name}",
   "set.monitorIconNumber": "Номер",
+  "set.monitorIconNone": "Без значка",
   "set.monitorSettingsAria": "Настройки монитора {name}",
   "set.monitorNameAria": "Название монитора {name}",
   "set.nav.about": "О программе",

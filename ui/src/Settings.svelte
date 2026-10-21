@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    applyProfile, FEATURES, checkForUpdates, exportSettings, getAbout, importSettings, installUpdate, openLogs, openRepo, resetSettings, getHotkeyStatus, getMonitors, hotkeysPause, listen, PROFILE_ICONS, MONITOR_ICONS, MONITOR_COLORS, badgeStyle,
+    applyProfile, FEATURES, checkForUpdates, exportSettings, getAbout, importSettings, installUpdate, openLogs, openRepo, resetSettings, getHotkeyStatus, getMonitors, hotkeysPause, listen, PROFILE_ICONS, MONITOR_ICONS, MONITOR_COLORS, NUMBER_BADGE, badgeStyle,
     saveCurrentAsProfile, updateSettings,
     type About, type FeatureName, type Hotkey, type HotkeyAction, type MonitorDto, type Profile,
   } from "./ipc";
@@ -384,7 +384,9 @@
           style:transform={drag ? `translateY(${dragShift(i)}px)` : undefined}>
           <div class="mhead">
             <button class="icon grip" title={t("set.drag")} aria-label={t("set.drag")} onpointerdown={(e) => dragStart(e, i)}>&#xE700;</button>
-            <span class="badge" class:icon={m.icon && MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{(m.icon && MONITOR_ICONS[m.icon]) || m.number}</span>
+            {#if m.icon}
+              <span class="badge" class:icon={MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{MONITOR_ICONS[m.icon] ?? m.number}</span>
+            {/if}
             <input class="name" type="text" value={m.name} placeholder={m.originalName} aria-label={t("set.monitorNameAria", { name: m.originalName })}
               onchange={(e) => rename(m, e.currentTarget.value)} />
             <span class="order">
@@ -404,8 +406,10 @@
           </div>
           <div class="features icons" role="radiogroup" aria-label={t("set.monitorIconAria", { name: m.name })}>
             <b>{t("set.icon")}</b>
-            <button class="icon pick num" class:on={!m.icon} role="radio" aria-checked={!m.icon} aria-label={t("set.monitorIconNumber")} title={t("set.monitorIconNumber")}
-              onclick={() => setMonitor(m.id, { icon: null })}>{m.number}</button>
+            <button class="icon pick" class:on={!m.icon} role="radio" aria-checked={!m.icon} aria-label={t("set.monitorIconNone")} title={t("set.monitorIconNone")}
+              onclick={() => setMonitor(m.id, { icon: null })}>&#xE711;</button>
+            <button class="icon pick num" class:on={m.icon === NUMBER_BADGE} role="radio" aria-checked={m.icon === NUMBER_BADGE} aria-label={t("set.monitorIconNumber")} title={t("set.monitorIconNumber")}
+              onclick={() => setMonitor(m.id, { icon: NUMBER_BADGE })}>{m.number}</button>
             {#each Object.entries(MONITOR_ICONS) as [key, glyph] (key)}
               <button class="icon pick" class:on={m.icon === key} role="radio" aria-checked={m.icon === key} aria-label={key}
                 onclick={() => setMonitor(m.id, { icon: key })}>{glyph}</button>

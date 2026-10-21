@@ -184,6 +184,7 @@
   "set.monitorDefault": "默认",
   "set.monitorIconAria": "显示器 {name} 的图标",
   "set.monitorIconNumber": "编号",
+  "set.monitorIconNone": "无图标",
   "set.monitorSettingsAria": "显示器 {name} 的设置",
   "set.monitorNameAria": "显示器 {name} 的名称",
   "set.nav.about": "关于",

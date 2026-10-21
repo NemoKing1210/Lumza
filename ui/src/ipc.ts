@@ -90,9 +90,12 @@ export const MONITOR_ICONS: Record<string, string> = {
   heart: "", star: "", pin: "", globe: "", camera: "", music: "",
 };
 
-/** Style for a monitor badge: the chosen colour (if any) with white text. */
+/** Icon key that shows the monitor number as the badge; no icon at all (the default) hides the badge. */
+export const NUMBER_BADGE = "number";
+
+/** Style for a monitor badge: the chosen colour (if any, the badge gradient is built from it) with white text. */
 export const badgeStyle = (m: { color: string | null }) =>
-  m.color ? `background:${m.color};color:#fff` : undefined;
+  m.color ? `--b:${m.color};color:#fff` : undefined;
 
 export const getMonitors =() => invoke<Snapshot>("get_monitors");
 export const refreshMonitors = () => invoke<void>("refresh_monitors");

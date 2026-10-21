@@ -184,6 +184,7 @@
   "set.monitorDefault": "Par défaut",
   "set.monitorIconAria": "Icône du moniteur {name}",
   "set.monitorIconNumber": "Numéro",
+  "set.monitorIconNone": "Sans icône",
   "set.monitorSettingsAria": "Paramètres du moniteur {name}",
   "set.monitorNameAria": "Nom du moniteur {name}",
   "set.nav.about": "À propos",

@@ -194,7 +194,9 @@
       {#if m.features.length === 0 || shownRows.length > 0}
         <section class="card stagger" style="--i: {idx + 1 + (linkedFeatures.length > 0 ? 1 : 0)}" aria-label={m.name}>
           <header>
-            <span class="badge" class:icon={m.icon && MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{(m.icon && MONITOR_ICONS[m.icon]) || m.number}</span>
+            {#if m.icon}
+              <span class="badge" class:icon={MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{MONITOR_ICONS[m.icon] ?? m.number}</span>
+            {/if}
             <span class="name">{m.name}</span>
           </header>
           {#if !m.probed && m.features.length === 0}
