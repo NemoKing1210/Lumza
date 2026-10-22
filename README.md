@@ -11,7 +11,7 @@ Lumza is a small open-source app for Windows 11 (and 10 21H2+). It lives in the 
 - **Tray flyout** with brightness, contrast and volume sliders for every monitor. Mica, system theme and accent colour, full keyboard control, mouse wheel over a slider.
 - **Linked sliders.** One common slider per setting with a per-monitor calibration range (for example LG 0–100, AOC 10–85) so panels of different brightness look alike. Any monitor can be excluded from the link.
 - **Profiles.** "Day", "Night" and "Games" out of the box, plus your own. A profile may change only some settings.
-- **Hotkeys and OSD.** Brightness of all monitors or one, volume, profiles, schedule pause; `Ctrl+Alt+↑/↓` and `Ctrl+Alt+B` (open the flyout) by default. The OSD never takes focus.
+- **Hotkeys and OSD.** Brightness of all monitors or one, volume, profiles, schedule pause; off by default; once switched on, `Ctrl+Alt+↑/↓` and `Ctrl+Alt+B` (open the flyout) are preset. The OSD never takes focus.
 - **Schedule.** Points at a fixed time or at sunrise/sunset (you enter the coordinates yourself: no geolocation, no network), smooth transitions, pause on manual change, skipped while a full-screen app is active. After sleep, unlock or plugging in a monitor the value that is right for that moment is applied.
 - **Gentle on the hardware.** Writes at most every 100 ms while dragging, only the latest value is queued per monitor, transition steps no more often than every 30 s. Each monitor has its own thread, so a slow monitor never stalls the others or the UI.
 - **Seven UI languages** (English, Русский, Español, Deutsch, Français, Português, 简体中文), strings in external JSON files (`locales/`).

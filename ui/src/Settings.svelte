@@ -176,7 +176,7 @@
 
   // ---- hotkeys
   const hotkeys = $derived(app.settings?.hotkeys ?? []);
-  const hotkeysEnabled = $derived(app.settings?.hotkeysEnabled ?? true);
+  const hotkeysEnabled = $derived(app.settings?.hotkeysEnabled ?? false);
   const osd = $derived(app.settings?.osd);
   const setOsd = (patch: Record<string, unknown>) => updateSettings({ osd: patch });
   const saveHotkeys = (list: Hotkey[]) => updateSettings({ hotkeys: $state.snapshot(list) });

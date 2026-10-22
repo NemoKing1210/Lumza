@@ -293,7 +293,7 @@ impl Default for Settings {
             linked: Linked::default(),
             profiles: Vec::new(),
             hotkeys: default_hotkeys(),
-            hotkeys_enabled: true,
+            hotkeys_enabled: false,
             osd: Osd::default(),
             schedule: Schedule::default(),
             ddc: Ddc::default(),
@@ -797,6 +797,7 @@ mod tests {
         let g = s.get();
         assert_eq!(g.schema_version, SCHEMA_VERSION);
         assert_eq!(g.hotkeys, default_hotkeys());
+        assert!(!g.hotkeys_enabled, "global hotkeys are opt-in");
         assert!(g.osd.enabled && g.osd.duration_ms == 1500 && g.osd.position == "bottom");
     }
 
