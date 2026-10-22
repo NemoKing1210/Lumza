@@ -2,9 +2,10 @@
   import { onMount, tick } from "svelte";
   import {
     applyProfile, fitFlyout, getMonitors, hideFlyout, isSolid, listen, openSettings, PROFILE_ICONS, MONITOR_ICONS, badgeStyle,
-    getScheduleState, refreshMonitors, reloadValues, resumeSchedule, saveCurrentAsProfile, setHdr, setLinkedValue, setValue,
-    takeNotice, uncalibrate, updateSettings,
-    type FeatureName, type FeatureDto, type MonitorDto, type ScheduleState, type ValueChanged,
+    getDisplayModes, getScheduleState, refreshMonitors, reloadValues, resumeSchedule, sameMode, saveCurrentAsProfile,
+    setDisplayMode, setHdr, setLinkedValue, setValue, takeNotice, uncalibrate, updateSettings,
+    type DisplayModeDto, type DisplayModesDto, type FeatureName, type FeatureDto, type MonitorDto, type ScheduleState,
+    type ValueChanged,
   } from "./ipc";
   import { app, initSettings } from "./store.svelte";
   import Slider from "./Slider.svelte";
@@ -29,12 +30,24 @@
   /** Profile under the pointer: its values are previewed on the sliders. */
   let previewId = $state<string | null>(null);
   let appliedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Connected displays and the Windows layout; null until known or when Windows cannot say. */
+  let modes = $state<DisplayModesDto | null>(null);
+  let showModes = $state(false);
   let common = $state<Record<string, number>>({});
   const dragging: Record<string, boolean> = {};
 
   const visible = $derived(monitors.filter((m) => !m.hidden));
   const step = $derived(app.settings?.general.step ?? 2);
   const profiles = $derived(app.settings?.profiles ?? []);
+  const canSwitchModes = $derived((modes?.displays.length ?? 0) >= 2);
+  const modeItems = $derived<{ id: string; mode: DisplayModeDto; label: string; sub?: string }[]>([
+    { id: "duplicate", mode: { type: "duplicate" }, label: t("app.display.duplicate") },
+    { id: "extend", mode: { type: "extend" }, label: t("app.display.extend") },
+    ...(modes?.displays ?? []).map((d) => ({
+      id: "only:" + d.key, mode: { type: "only", key: d.key } as DisplayModeDto,
+      label: t("app.display.only", { number: d.number }), sub: d.name,
+    })),
+  ]);
 
   /** Monitors that follow the common slider of a feature. */
   const participants = (f: FeatureName) =>
@@ -98,7 +111,7 @@
     fitFlyout(h);
   }
 
-  $effect(() => { fit(visible, scanning, toast, showProfiles, linkedFeatures, profiles, sched); });
+  $effect(() => { fit(visible, scanning, toast, showProfiles, showModes, modes, linkedFeatures, profiles, sched); });
 
   async function saveProfile() {
     const name = newName.trim();
@@ -120,6 +133,11 @@
     appliedTimer = setTimeout(() => { appliedId = null; showProfiles = false; adding = false; }, 650);
   }
 
+  function pickMode(mode: DisplayModeDto) {
+    setDisplayMode(mode);
+    showModes = false;
+  }
+
   onMount(() => {
     // Content can change height without any of the tracked state changing (fonts, wrapping, toast).
     const ro = new ResizeObserver(() => fit());
@@ -129,6 +147,7 @@
     getMonitors().then((s) => { monitors = s.monitors; scanning = s.scanning; });
     takeNotice().then((n) => n && showToast(n, 8000));
     getScheduleState().then((s) => (sched = s));
+    getDisplayModes().then((m) => (modes = m));
 
     const un = Promise.all([
       listen<{ monitors: MonitorDto[]; scanning: boolean }>("monitors-changed", (e) => {
@@ -142,8 +161,10 @@
       listen<ScheduleState>("schedule-state", (e) => (sched = e.payload)),
       listen("write-failed", () => showToast(t("app.writeFailed"))),
       listen("hdr-failed", () => showToast(t("app.hdrFailed"))),
+      listen<DisplayModesDto | null>("display-modes-changed", (e) => (modes = e.payload)),
+      listen("display-mode-failed", () => showToast(t("app.displayModeFailed"))),
       listen("flyout-shown", () => { shown = false; alt = !alt; lastFit = 0; setTimeout(() => (shown = true), 30); reloadValues(); }),
-      listen("flyout-hidden", () => { shown = false; showProfiles = false; adding = false; appliedId = null; previewId = null; }),
+      listen("flyout-hidden", () => { shown = false; showProfiles = false; showModes = false; adding = false; appliedId = null; previewId = null; }),
     ]);
     return () => { ro.disconnect(); un.then((fns) => fns.forEach((f) => f())); };
   });
@@ -151,6 +172,7 @@
   const onkey = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
     if (adding) adding = false;
+    else if (showModes) showModes = false;
     else if (showProfiles) showProfiles = false;
     else hideFlyout();
   };
@@ -280,12 +302,30 @@
     </div>
   </div>
 
+  <div class="drawer" class:open={showModes} inert={!showModes}>
+    <div class="drawer-inner">
+      <div class="card pcard mcard" role="menu" aria-label={t("app.displayMode")}>
+        {#each modeItems as it (it.id)}
+          {@const on = sameMode(modes?.current ?? null, it.mode)}
+          <button class="mitem" class:on role="menuitemradio" aria-checked={on} onclick={() => pickMode(it.mode)}>
+            <span>{it.label}</span>
+            {#if it.sub}<small>{it.sub}</small>{/if}
+          </button>
+        {/each}
+      </div>
+    </div>
+  </div>
+
   <footer class="stagger" style="--i: {visible.length + 2}">
     <button class="icon" class:on={showProfiles} title={t("app.profiles")} aria-label={t("app.profiles")} aria-expanded={showProfiles}
-      onclick={() => (showProfiles = !showProfiles)}></button>
+      onclick={() => { showProfiles = !showProfiles; if (showProfiles) showModes = false; }}></button>
     <button class="icon" class:on={app.settings?.linked.enabled} title={t("app.linkMonitors")} aria-label={t("app.linkMonitors")}
       aria-pressed={app.settings?.linked.enabled ?? false}
       onclick={() => updateSettings({ linked: { enabled: !app.settings?.linked.enabled } })}></button>
+    {#if canSwitchModes}
+      <button class="icon" class:on={showModes} title={t("app.displayMode")} aria-label={t("app.displayMode")} aria-expanded={showModes}
+        onclick={() => { showModes = !showModes; if (showModes) { showProfiles = false; adding = false; } }}>&#xEBC6;</button>
+    {/if}
     <span class="spacer"></span>
     <button class="icon" title={t("app.refreshMonitors")} aria-label={t("app.refreshMonitors")} onclick={() => refreshMonitors()}></button>
     <button class="icon" title={t("app.settings")} aria-label={t("app.settings")} onclick={() => openSettings()}></button>

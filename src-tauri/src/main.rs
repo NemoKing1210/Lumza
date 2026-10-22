@@ -3,6 +3,7 @@
 mod autostart;
 mod clock;
 mod controller;
+mod display_modes;
 mod flyout;
 mod hotkeys;
 mod i18n;
@@ -19,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use controller::{Controller, Snapshot};
+use display_modes::{DisplayModeDto, DisplayModesDto};
 use flyout::Flyout;
 use lumza_core::mock::{MockBackend, SharedMock};
 use lumza_core::store::{LoadOutcome, Profile, Settings, SettingsStore};
@@ -88,6 +90,16 @@ fn set_value(app: AppHandle, c: State<Arc<Controller>>, monitor_id: String, feat
 #[tauri::command]
 fn set_hdr(c: State<Arc<Controller>>, monitor_id: String, on: bool) {
     c.set_hdr(&monitor_id, on);
+}
+
+#[tauri::command]
+fn get_display_modes(c: State<Arc<Controller>>) -> Option<DisplayModesDto> {
+    c.display_modes()
+}
+
+#[tauri::command]
+fn set_display_mode(c: State<Arc<Controller>>, mode: DisplayModeDto) {
+    c.set_display_mode(mode.into());
 }
 
 #[tauri::command]
@@ -396,6 +408,8 @@ fn main() {
             reload_values,
             set_value,
             set_hdr,
+            get_display_modes,
+            set_display_mode,
             fit_flyout,
             hide_flyout,
             is_solid,
@@ -489,6 +503,9 @@ fn main() {
             app.listen("settings-changed", move |_| tray::rebuild_menu(&menu_handle));
             let menu_handle = handle.clone();
             app.listen("schedule-state", move |_| tray::rebuild_menu(&menu_handle));
+            // Displays come and go with hot-plug and layout switches, so the display submenu follows them.
+            let menu_handle = handle.clone();
+            app.listen("display-modes-changed", move |_| tray::rebuild_menu(&menu_handle));
 
             // The schedule re-evaluates when monitors (re)appear and when its own inputs change.
             let s = scheduler.clone();

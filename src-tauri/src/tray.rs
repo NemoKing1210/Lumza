@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use lumza_core::store::SettingsStore;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuBuilder, SubmenuBuilder};
+use tauri::menu::{CheckMenuItemBuilder, Menu, MenuBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::controller::Controller;
+use crate::display_modes::{menu_entries, mode_from_menu_id};
 use crate::flyout::Flyout;
 use crate::i18n;
 use crate::scheduler::Scheduler;
@@ -57,9 +58,20 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let toggle = i18n::t(&lang, if sched.paused { "be.tray.resume" } else { "be.tray.pause" });
     let toggle_item =
         tauri::menu::MenuItemBuilder::with_id("schedule-toggle", toggle).enabled(sched.enabled).build(app)?;
-    MenuBuilder::new(app)
-        .text("refresh", i18n::t(&lang, "be.tray.refresh"))
-        .item(&sub)
+    let modes = app
+        .try_state::<Arc<Controller>>()
+        .and_then(|c| c.display_modes_raw())
+        .unwrap_or_else(|| lumza_core::DisplayModes { displays: Vec::new(), current: None });
+    let entries = menu_entries(&lang, &modes);
+    let mut builder = MenuBuilder::new(app).text("refresh", i18n::t(&lang, "be.tray.refresh")).item(&sub);
+    if !entries.is_empty() {
+        let mut display = SubmenuBuilder::new(app, i18n::t(&lang, "be.tray.displayMode"));
+        for e in &entries {
+            display = display.item(&CheckMenuItemBuilder::with_id(&e.id, &e.label).checked(e.checked).build(app)?);
+        }
+        builder = builder.item(&display.build()?);
+    }
+    builder
         .item(&toggle_item)
         .text("settings", i18n::t(&lang, "be.tray.settings"))
         .separator()
@@ -92,6 +104,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(s) = app.try_state::<Arc<Scheduler>>() {
                     s.toggle();
                 }
+            }
+            id if id.starts_with("display:") => {
+                if let (Some(mode), Some(c)) = (mode_from_menu_id(id), app.try_state::<Arc<Controller>>()) {
+                    c.set_display_mode(mode);
+                }
+                // A check item flips itself on click; put the check back where the real layout says.
+                rebuild_menu(app);
             }
             id if id.starts_with("profile:") => {
                 crate::scheduler::manual(app);

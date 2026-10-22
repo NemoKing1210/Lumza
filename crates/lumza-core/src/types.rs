@@ -75,6 +75,33 @@ pub struct HdrState {
     pub enabled: bool,
 }
 
+/// How Windows spreads the desktop over the connected displays (the Win+P choices).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayMode {
+    Duplicate,
+    Extend,
+    /// Only the display with this key; the others are switched off.
+    Only(String),
+}
+
+/// One physically connected display, whether or not Windows currently uses it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayEntry {
+    /// Opaque and stable while the display stays connected; the handle for [`DisplayMode::Only`].
+    pub key: String,
+    /// 1-based, Lumza's own numbering: it can differ from Windows "Display settings".
+    pub number: u32,
+    pub name: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayModes {
+    pub displays: Vec<DisplayEntry>,
+    /// `None` when the current layout is none of the named modes (nothing is active).
+    pub current: Option<DisplayMode>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Connection {
     Ddc,

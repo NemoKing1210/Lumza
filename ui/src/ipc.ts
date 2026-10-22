@@ -13,6 +13,10 @@ export interface MonitorDto {
   /** Present only when the monitor supports HDR. */
   hdr: HdrDto | null;
 }
+export type DisplayModeDto = { type: "duplicate" } | { type: "extend" } | { type: "only"; key: string };
+export interface DisplayEntryDto { key: string; number: number; name: string; active: boolean }
+/** `current` is null when the layout is none of the named modes. */
+export interface DisplayModesDto { displays: DisplayEntryDto[]; current: DisplayModeDto | null }
 export interface Snapshot { monitors: MonitorDto[]; scanning: boolean }
 export interface ValueChanged { id: string; feature: FeatureName; percent: number }
 
@@ -107,6 +111,9 @@ export const reloadValues = () => invoke<void>("reload_values");
 export const setValue = (monitorId: string, feature: FeatureName, value: number) =>
   invoke<void>("set_value", { monitorId, feature, value });
 export const setHdr = (monitorId: string, on: boolean) => invoke<void>("set_hdr", { monitorId, on });
+/** Connected displays and the current layout; null when Windows cannot say. */
+export const getDisplayModes = () => invoke<DisplayModesDto | null>("get_display_modes");
+export const setDisplayMode = (mode: DisplayModeDto) => invoke<void>("set_display_mode", { mode });
 export const setLinkedValue = (feature: FeatureName, value: number) =>
   invoke<void>("set_linked_value", { feature, value });
 export const applyProfile = (id: string) => invoke<boolean>("apply_profile", { id });
@@ -139,6 +146,12 @@ export const openLogs = () => invoke<void>("open_logs");
 export const getAbout = () => invoke<About>("about");
 
 export { listen };
+
+/** Whether `b` is the layout in force (`current` is null when it is none of the named modes). */
+export function sameMode(current: DisplayModeDto | null, b: DisplayModeDto): boolean {
+  if (!current || current.type !== b.type) return false;
+  return current.type !== "only" || current.key === (b as { key: string }).key;
+}
 
 /** Mirror of `lumza_core::scale::uncalibrate`: monitor percent -> common percent. */
 export function uncalibrate(percent: number, min: number, max: number): number {

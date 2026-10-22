@@ -14,9 +14,11 @@ use std::time::{Duration, Instant};
 use lumza_core::link;
 use lumza_core::scale::percent_to_raw;
 use lumza_core::store::{Cache, CachedFeature, CachedMonitor, Profile, Range, Settings, SettingsStore};
-use lumza_core::{Feature, HdrState, MonitorInfo, MonitorPort, PortSource, VcpValue};
+use lumza_core::{DisplayMode, DisplayModes, Feature, HdrState, MonitorInfo, MonitorPort, PortSource, VcpValue};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+
+use crate::display_modes::{Busy, DisplayModesDto};
 
 type Probe = Vec<(Feature, Option<VcpValue>)>;
 
@@ -166,6 +168,9 @@ struct State {
     /// HDR state by monitor id, only for monitors Windows could read it for. Not DDC/CI, so
     /// it lives outside `Mon` and the workers.
     hdr: HashMap<String, HdrState>,
+    /// Connected displays and the current layout as of the last scan or switch. Not DDC/CI either,
+    /// and cached so the tray and the flyout never wait on the source lock.
+    displays: Option<DisplayModes>,
 }
 
 /// Cache writes are delayed so a slider drag produces one disk write, not hundreds.
@@ -180,6 +185,8 @@ pub struct Controller {
     cache_save_pending: AtomicBool,
     rescanning: AtomicBool,
     rescan_again: AtomicBool,
+    /// One display-layout switch at a time.
+    switching: Busy,
 }
 
 #[derive(Serialize, Clone)]
@@ -280,6 +287,7 @@ impl Controller {
             cache_save_pending: AtomicBool::new(false),
             rescanning: AtomicBool::new(false),
             rescan_again: AtomicBool::new(false),
+            switching: Busy::new(),
         })
     }
 
@@ -372,11 +380,11 @@ impl Controller {
 
     fn do_scan(self: &Arc<Self>) {
         let started = Instant::now();
-        let scanned = {
+        let (scanned, displays) = {
             let ddc = self.settings.get().ddc;
             let mut source = lock(&self.source);
             source.set_timing(ddc.write_delay_ms, ddc.read_delay_ms, ddc.retries);
-            source.scan()
+            (source.scan(), source.display_modes())
         };
         let ports = match scanned {
             Ok(p) => p,
@@ -385,6 +393,8 @@ impl Controller {
                 Vec::new()
             }
         };
+        // Even when no monitor answers DDC/CI: a layout that left no display is still a layout.
+        self.publish_display_modes(displays);
         let mut st = lock(&self.state);
         st.generation += 1;
         let generation = st.generation;
@@ -530,6 +540,51 @@ impl Controller {
                 this.refresh_hdr(true);
             })
             .expect("spawn hdr");
+    }
+
+    /// Displays as of the last scan or switch; `None` when Windows could not be asked.
+    pub fn display_modes_raw(&self) -> Option<DisplayModes> {
+        lock(&self.state).displays.clone()
+    }
+
+    pub fn display_modes(&self) -> Option<DisplayModesDto> {
+        self.display_modes_raw().map(Into::into)
+    }
+
+    /// Store `new` and tell the windows, but only when it differs from what they already have.
+    fn publish_display_modes(&self, new: Option<DisplayModes>) {
+        {
+            let mut st = lock(&self.state);
+            if st.displays == new {
+                return;
+            }
+            st.displays = new.clone();
+        }
+        let _ = self.app.emit("display-modes-changed", new.map(DisplayModesDto::from));
+    }
+
+    /// Switch the display layout. Runs on a one-shot thread: Windows can take seconds to
+    /// reconfigure the GPU outputs. A second request while one is running is ignored. On success
+    /// the rescan (which `WM_DISPLAYCHANGE` would also trigger) refreshes monitors and layout;
+    /// a refusal raises `display-mode-failed` and pushes the real layout back.
+    pub fn set_display_mode(self: &Arc<Self>, mode: DisplayMode) {
+        let this = self.clone();
+        std::thread::Builder::new()
+            .name("display-mode".into())
+            .spawn(move || {
+                let Some(_busy) = this.switching.try_acquire() else { return };
+                let res = lock(&this.source).set_display_mode(&mode);
+                match res {
+                    Ok(()) => this.rescan(),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "display mode change failed");
+                        let _ = this.app.emit("display-mode-failed", ());
+                        let real = lock(&this.source).display_modes();
+                        this.publish_display_modes(real);
+                    }
+                }
+            })
+            .expect("spawn display-mode");
     }
 
     /// Set one feature of one monitor (0–100 %). Unknown monitors are ignored: a

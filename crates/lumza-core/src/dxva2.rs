@@ -13,13 +13,14 @@ use windows::Win32::Devices::Display::{
     DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
     DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
     DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_TARGET_DEVICE_NAME, PHYSICAL_MONITOR, QDC_ONLY_ACTIVE_PATHS,
+    QUERY_DISPLAY_CONFIG_FLAGS,
 };
 use windows::Win32::Foundation::{HANDLE, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW};
 
 use crate::backend::{DisplayBackend, MonitorPort, PortSource};
 use crate::error::{Error, Result};
-use crate::types::{Connection, HdrState, MonitorId, MonitorInfo, VcpValue};
+use crate::types::{Connection, DisplayMode, DisplayModes, HdrState, MonitorId, MonitorInfo, VcpValue};
 
 /// DDC/CI timing (spec §6): ≥50 ms after a write, ≥40 ms after a read.
 #[derive(Debug, Clone, Copy)]
@@ -151,23 +152,26 @@ pub(crate) fn wide_to_string(w: &[u16]) -> String {
     String::from_utf16_lossy(&w[..end])
 }
 
-/// Active display paths (one per attached monitor), or `None` when Windows refuses the query.
-pub(crate) fn active_paths() -> Option<Vec<DISPLAYCONFIG_PATH_INFO>> {
+/// Display paths for the given `QDC_*` filter, or `None` when Windows refuses the query.
+pub(crate) fn query_paths(flags: QUERY_DISPLAY_CONFIG_FLAGS) -> Option<Vec<DISPLAYCONFIG_PATH_INFO>> {
     unsafe {
         let (mut np, mut nm) = (0u32, 0u32);
-        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut np, &mut nm).0 != 0 {
+        if GetDisplayConfigBufferSizes(flags, &mut np, &mut nm).0 != 0 {
             return None;
         }
         let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); np as usize];
         let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); nm as usize];
-        if QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &mut np, paths.as_mut_ptr(), &mut nm, modes.as_mut_ptr(), None).0
-            != 0
-        {
+        if QueryDisplayConfig(flags, &mut np, paths.as_mut_ptr(), &mut nm, modes.as_mut_ptr(), None).0 != 0 {
             return None;
         }
         paths.truncate(np as usize);
         Some(paths)
     }
+}
+
+/// Active display paths (one per attached monitor), or `None` when Windows refuses the query.
+pub(crate) fn active_paths() -> Option<Vec<DISPLAYCONFIG_PATH_INFO>> {
+    query_paths(QDC_ONLY_ACTIVE_PATHS)
 }
 
 fn display_config_targets() -> HashMap<String, Target> {
@@ -271,7 +275,7 @@ unsafe extern "system" fn enum_proc(h: HMONITOR, _: HDC, _: *mut RECT, lp: LPARA
     BOOL(1)
 }
 
-fn gdi_number(device: &str) -> u32 {
+pub(crate) fn gdi_number(device: &str) -> u32 {
     device.trim_start_matches(r"\\.\DISPLAY").parse().unwrap_or(0)
 }
 
@@ -378,6 +382,14 @@ impl PortSource for Dxva2Backend {
 
     fn set_hdr(&mut self, device: &str, on: bool) -> Result<()> {
         crate::hdr::set(device, on)
+    }
+
+    fn display_modes(&mut self) -> Option<DisplayModes> {
+        crate::display_config::query().ok()
+    }
+
+    fn set_display_mode(&mut self, mode: &DisplayMode) -> Result<()> {
+        crate::display_config::apply(mode)
     }
 }
 

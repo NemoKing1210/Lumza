@@ -1,6 +1,6 @@
 use crate::caps::Capabilities;
 use crate::error::{Error, Result};
-use crate::types::{Feature, HdrState, MonitorId, MonitorInfo, VcpValue};
+use crate::types::{DisplayMode, DisplayModes, Feature, HdrState, MonitorId, MonitorInfo, VcpValue};
 
 /// Abstraction over real hardware (Dxva2, WMI) and the mock.
 /// Implementations must not be called from a UI thread (DDC/CI is slow).
@@ -36,6 +36,15 @@ pub trait PortSource: Send {
 
     fn set_hdr(&mut self, _device: &str, _on: bool) -> Result<()> {
         Err(Error::Invalid("HDR is not supported".into()))
+    }
+
+    /// Connected displays and the current layout; `None` when Windows cannot say.
+    fn display_modes(&mut self) -> Option<DisplayModes> {
+        None
+    }
+
+    fn set_display_mode(&mut self, _mode: &DisplayMode) -> Result<()> {
+        Err(Error::Invalid("display modes are not supported".into()))
     }
 }
 
@@ -73,5 +82,12 @@ mod tests {
         let mut s = NoHdr;
         assert_eq!(s.hdr_state(r"\\.\DISPLAY1"), None);
         assert!(matches!(s.set_hdr(r"\\.\DISPLAY1", true), Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn default_port_source_has_no_display_modes() {
+        let mut s = NoHdr;
+        assert_eq!(s.display_modes(), None);
+        assert!(matches!(s.set_display_mode(&DisplayMode::Extend), Err(Error::Invalid(_))));
     }
 }

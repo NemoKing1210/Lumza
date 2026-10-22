@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use crate::backend::{DisplayBackend, MonitorPort, PortSource};
 use crate::error::{Error, Result};
-use crate::types::{Connection, HdrState, MonitorId, MonitorInfo, VcpValue};
+use crate::topology;
+use crate::types::{Connection, DisplayEntry, DisplayMode, DisplayModes, HdrState, MonitorId, MonitorInfo, VcpValue};
 
 #[derive(Debug, Clone)]
 pub struct MockMonitor {
@@ -26,11 +27,27 @@ pub struct MockBackend {
     pub writes: Vec<(MonitorId, u8, u32)>,
     /// HDR state by GDI device name; displays without an entry have no HDR.
     pub hdr: HashMap<String, HdrState>,
+    /// Current display layout; a monitor is attached unless `Only` names another one.
+    pub mode: DisplayMode,
 }
 
 impl MockBackend {
     pub fn new(monitors: Vec<MockMonitor>) -> Self {
-        Self { monitors, latency: Duration::ZERO, writes: Vec::new(), hdr: HashMap::new() }
+        Self { monitors, latency: Duration::ZERO, writes: Vec::new(), hdr: HashMap::new(), mode: DisplayMode::Extend }
+    }
+
+    fn is_active(&self, m: &MockMonitor) -> bool {
+        !matches!(&self.mode, DisplayMode::Only(key) if *key != m.info.id)
+    }
+
+    fn display_entries(&self) -> Vec<DisplayEntry> {
+        let entry = |m: &MockMonitor| DisplayEntry {
+            key: m.info.id.clone(),
+            number: m.info.number,
+            name: m.info.name.clone(),
+            active: self.is_active(m),
+        };
+        self.monitors.iter().map(entry).collect()
     }
 
     /// Two monitors resembling the reference hardware from the spec.
@@ -130,7 +147,13 @@ impl MonitorPort for MockPort {
 
 impl PortSource for SharedMock {
     fn scan(&mut self) -> Result<Vec<(MonitorInfo, Box<dyn MonitorPort>)>> {
-        let infos = self.0.lock().unwrap().list()?;
+        let infos = {
+            let mut mock = self.0.lock().unwrap();
+            let mut infos = mock.list()?;
+            let displays = mock.display_entries();
+            infos.retain(|i| displays.iter().any(|d| d.key == i.id && d.active));
+            infos
+        };
         Ok(infos
             .into_iter()
             .map(|i| {
@@ -152,6 +175,18 @@ impl PortSource for SharedMock {
             }
             _ => Err(Error::Invalid(format!("{device} has no HDR"))),
         }
+    }
+
+    fn display_modes(&mut self) -> Option<DisplayModes> {
+        let mock = self.0.lock().unwrap();
+        Some(DisplayModes { displays: mock.display_entries(), current: Some(mock.mode.clone()) })
+    }
+
+    fn set_display_mode(&mut self, mode: &DisplayMode) -> Result<()> {
+        let mut mock = self.0.lock().unwrap();
+        topology::validate(mode, &mock.display_entries())?;
+        mock.mode = mode.clone();
+        Ok(())
     }
 }
 
@@ -209,5 +244,34 @@ mod tests {
     fn hdr_set_on_unsupported_device_errors() {
         let mut s = demo_source();
         assert!(matches!(s.set_hdr(r"\\.\DISPLAY2", true), Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn only_hides_the_other_monitor_but_keeps_it_listed() {
+        let mut s = demo_source();
+        s.set_display_mode(&DisplayMode::Only("GSM5B09-1234".into())).unwrap();
+        assert_eq!(s.scan().unwrap().len(), 1);
+        let m = s.display_modes().unwrap();
+        assert_eq!(m.displays.len(), 2);
+        assert_eq!(m.displays.iter().filter(|d| d.active).count(), 1);
+        assert_eq!(m.current, Some(DisplayMode::Only("GSM5B09-1234".into())));
+    }
+
+    #[test]
+    fn extend_and_duplicate_show_every_monitor() {
+        let mut s = demo_source();
+        s.set_display_mode(&DisplayMode::Only("GSM5B09-1234".into())).unwrap();
+        s.set_display_mode(&DisplayMode::Extend).unwrap();
+        assert_eq!(s.scan().unwrap().len(), 2);
+        s.set_display_mode(&DisplayMode::Duplicate).unwrap();
+        assert_eq!(s.display_modes().unwrap().current, Some(DisplayMode::Duplicate));
+        assert_eq!(s.scan().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn unknown_display_key_is_rejected_and_changes_nothing() {
+        let mut s = demo_source();
+        assert!(matches!(s.set_display_mode(&DisplayMode::Only("gone".into())), Err(Error::NotFound(_))));
+        assert_eq!(s.display_modes().unwrap().current, Some(DisplayMode::Extend));
     }
 }
