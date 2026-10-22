@@ -466,10 +466,12 @@ fn main() {
             app.manage(store.clone());
 
             // Default is "start with Windows" (F-25); keep the registry in line with the setting.
-            // LUMZA_NO_AUTOSTART lets test runs leave the registry alone.
-            if std::env::var_os("LUMZA_NO_AUTOSTART").is_none() {
+            // LUMZA_NO_AUTOSTART lets test runs leave the registry alone. Debug builds never touch it:
+            // they have a console window and would be what Windows launches at sign-in.
+            if !cfg!(debug_assertions) && std::env::var_os("LUMZA_NO_AUTOSTART").is_none() {
                 let want = store.get().general.autostart;
-                if want != autostart::is_enabled() {
+                let in_sync = if want { autostart::is_current() } else { !autostart::is_enabled() };
+                if !in_sync {
                     if let Err(e) = autostart::set(want) {
                         tracing::warn!(error = %e, "autostart sync failed");
                     }
