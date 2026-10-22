@@ -22,7 +22,7 @@
 * { box-sizing: border-box; margin: 0; }
 html, body { background: transparent; color: var(--fg); overflow: hidden; user-select: none; -webkit-user-select: none; }
 /* A flyout taller than the screen scrolls with the wheel; the scrollbar stays hidden. */
-html:has(body.flyout) { overflow-x: hidden; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; }
+html:has(body.flyout) { overflow-x: hidden; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; overflow-anchor: none; }
 html:has(body.flyout)::-webkit-scrollbar { display: none; }
 body.flyout { overflow: visible; }
 .glyph, .big, button.icon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
@@ -283,8 +283,9 @@ nav h1 { display: none; }
 }
 
 /* ====================== Profile picker (flyout) ====================== */
-/* The drawer unfolds from zero height (0fr -> 1fr) and cancels the flex gap while it is folded. */
-.drawer { display: grid; grid-template-rows: 0fr; margin-top: -8px; transition: grid-template-rows 0.34s var(--ease-move), margin-top 0.34s var(--ease-move); }
+/* The drawer takes its final height at once (0fr -> 1fr) and cancels the flex gap while it is folded.
+   The height is not animated here: the flyout window glides to it from Rust, and the contents fade in. */
+.drawer { display: grid; grid-template-rows: 0fr; margin-top: -8px; }
 .drawer.open { grid-template-rows: 1fr; margin-top: 0; }
 .drawer-inner { overflow: hidden; min-height: 0; }
 .pcard { gap: 10px; opacity: 0; transform: translateY(-4px); transition: opacity 0.25s ease, transform 0.3s var(--ease-move); }
