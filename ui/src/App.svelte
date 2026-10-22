@@ -60,6 +60,11 @@
       : [],
   );
 
+  const linkedOpen = $derived(linkedFeatures.length > 0 && visible.length > 0);
+  /** Last non-empty `linkedFeatures`, so the card keeps its sliders while the drawer folds. */
+  let linkedKept = $state<FeatureName[]>([]);
+  $effect(() => { if (linkedFeatures.length > 0) linkedKept = linkedFeatures; });
+
   const previewProfile = $derived(profiles.find((p) => p.id === previewId));
   const previewOf = (m: MonitorDto, f: FeatureName): number | null => previewProfile?.values[m.id]?.[f] ?? null;
   /** Common slider preview: mean of the previewed values of the participants, like the common value itself. */
@@ -203,28 +208,10 @@
       <button onclick={() => openSettings()}>{t("app.openSettings")}</button>
     </section>
   {:else}
-    {#if linkedFeatures.length > 0}
-      <section class="card stagger" style="--i: 1" aria-label={t("app.allMonitors")}>
-        <header>
-          <span class="badge link" aria-hidden="true"></span>
-          <span class="name">{t("app.allMonitors")}</span>
-        </header>
-        {#each linkedFeatures as f (f)}
-          <Slider
-            feature={f} label={t("app.sliderAll", { feature: t('feature.' + f) })} {step}
-            bind:value={common[f]}
-            preview={previewCommon(f)}
-            send={(v) => setLinkedValue(f, v)}
-            onactive={(a) => (dragging[f] = a)}
-          />
-        {/each}
-      </section>
-    {/if}
-
     {#each visible as m, idx (m.id)}
       {@const shownRows = rows(m)}
       {#if m.features.length === 0 || shownRows.length > 0}
-        <section class="card stagger" style="--i: {idx + 1 + (linkedFeatures.length > 0 ? 1 : 0)}" aria-label={m.name}>
+        <section class="card stagger" style="--i: {idx + 1}" aria-label={m.name}>
           <header>
             {#if m.icon}
               <span class="badge" class:icon={MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{MONITOR_ICONS[m.icon] ?? m.number}</span>
@@ -263,6 +250,27 @@
       {/if}
     {/each}
   {/if}
+
+  <!-- "All monitors" unfolds below the monitors like the drawers under it; its sliders stay while it folds away. -->
+  <div class="drawer stagger" class:open={linkedOpen} inert={!linkedOpen} style="--i: {visible.length + 1}">
+    <div class="drawer-inner">
+      <section class="card lcard" aria-label={t("app.allMonitors")}>
+        <header>
+          <span class="badge link" aria-hidden="true"></span>
+          <span class="name">{t("app.allMonitors")}</span>
+        </header>
+        {#each linkedKept as f (f)}
+          <Slider
+            feature={f} label={t("app.sliderAll", { feature: t('feature.' + f) })} {step}
+            bind:value={common[f]}
+            preview={previewCommon(f)}
+            send={(v) => setLinkedValue(f, v)}
+            onactive={(a) => (dragging[f] = a)}
+          />
+        {/each}
+      </section>
+    </div>
+  </div>
 
   <div class="drawer" class:open={showProfiles} inert={!showProfiles}>
     <div class="drawer-inner">

@@ -341,10 +341,10 @@ button.primary:hover:not(:disabled) { background: var(--accent); filter: brightn
 :root[data-theme="dark"] { --card-fill: rgb(255 255 255 / .0512); --stroke-card: rgb(0 0 0 / .1); --hover-fill: rgb(255 255 255 / .0605); --press-fill: rgb(255 255 255 / .0326); --thumb-stroke: rgb(255 255 255 / .09); }
 
 /* Card: layer fill, hairline stroke, 8px overlay radius, no shadow (elevation comes from the flyout itself). */
-main > .card { gap: 4px; padding: 12px 16px 8px; border-radius: 8px; background: var(--card-fill); border: 1px solid var(--stroke-card); box-shadow: none; }
-main > .card:hover { box-shadow: none; border-color: var(--stroke-card); }
-main > .card > header { gap: 10px; padding: 0 0 6px; border-bottom: 0; }
-main > .card .name { font-size: 14px; font-weight: 600; letter-spacing: 0; }
+main > .card, .lcard { gap: 4px; padding: 12px 16px 8px; border-radius: 8px; background: var(--card-fill); border: 1px solid var(--stroke-card); box-shadow: none; }
+main > .card:hover, .lcard:hover { box-shadow: none; border-color: var(--stroke-card); }
+main > .card > header, .lcard > header { gap: 10px; padding: 0 0 6px; border-bottom: 0; }
+main > .card .name, .lcard .name { font-size: 14px; font-weight: 600; letter-spacing: 0; }
 .badge { --b: var(--accent); min-width: 22px; height: 22px; border-radius: 4px; box-shadow: none; font-size: 12px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--b) 78%, #fff), color-mix(in srgb, var(--b) 85%, #000)); }
 .badge.link { border-radius: 4px; }
@@ -409,3 +409,7 @@ button.icon.pick.on, button.icon.pick.on:hover { background: var(--hover-fill); 
 .padd .save button { height: 32px; border-radius: 4px; border: 1px solid var(--stroke); }
 .padd .save button.primary { border-color: var(--accent); }
 .padd .save button.primary:disabled { background: var(--hover-fill); border-color: var(--stroke); color: var(--fg2); opacity: 1; }
+
+/* "All monitors" card: unfolds in the drawer below the monitors, like the profile list. */
+.lcard { opacity: 0; transform: translateY(-4px); transition: opacity 0.25s ease, transform 0.3s var(--ease-move), border-color 0.2s ease, box-shadow 0.25s ease; }
+.drawer.open .lcard { opacity: 1; transform: none; }
