@@ -27,6 +27,7 @@ use lumza_core::store::{LoadOutcome, Profile, Settings, SettingsStore};
 use lumza_core::{Feature, PortSource};
 use scheduler::{Preview, ScheduleState, Scheduler};
 use serde::Serialize;
+use tauri::window::Color;
 use tauri::{
     AppHandle, Emitter, Listener, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
@@ -341,6 +342,7 @@ pub fn open_settings_window(app: &AppHandle) {
     // helper thread: callers run on the main thread (sync commands, tray and hotkey handlers), and
     // building a webview window there deadlocks on Windows, leaving the window blank.
     let app = app.clone();
+    let background = solid_background(&app);
     std::thread::spawn(move || {
         let built = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html".into()))
             .title(i18n::t(&i18n::lang_of(&app), "be.window.settings"))
@@ -349,12 +351,29 @@ pub fn open_settings_window(app: &AppHandle) {
             .center()
             .decorations(false)
             .shadow(true)
+            // WebView2 is white until the page has painted; match `--solid-bg` so a dark theme does not flash.
+            .background_color(background)
             .additional_browser_args(BROWSER_ARGS)
             .build();
         if let Err(e) = built {
             tracing::error!(error = %e, "settings window failed");
         }
     });
+}
+
+/// The opaque window fill (`--solid-bg` in `app.css`) for the chosen theme; "system" follows Windows.
+fn solid_background(app: &AppHandle) -> Color {
+    let theme = app.state::<Arc<SettingsStore>>().get().general.theme;
+    let dark = match theme.as_str() {
+        "light" => false,
+        "dark" => true,
+        _ => app.get_webview_window("flyout").and_then(|w| w.theme().ok()).is_some_and(|t| t == tauri::Theme::Dark),
+    };
+    if dark {
+        Color(44, 44, 46, 255)
+    } else {
+        Color(243, 243, 245, 255)
+    }
 }
 
 fn create_flyout(app: &tauri::App) -> tauri::Result<WebviewWindow> {
