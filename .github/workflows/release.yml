@@ -2,17 +2,71 @@ name: Release
 
 # Pushing a tag such as v1.0.0 builds the NSIS installers (x64 and ARM64) and a portable
 # archive, signs the update packages and publishes everything, plus latest.json for the
-# in-app updater, as a GitHub Release.
+# in-app updater, as a draft GitHub Release. The release notes are the matching section of
+# CHANGELOG.md, and the build refuses to start if the tag and the version files disagree.
+#
+# Run it by hand from the Actions tab for a dry run: the same build, but nothing is
+# published; the installers come back as workflow artifacts instead.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Check version and notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      notes: ${{ steps.notes.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the version files
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          want="${TAG#v}"
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          tauri=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          ui=$(node -p "require('./ui/package.json').version")
+          root=$(node -p "require('./package.json').version")
+          bad=0
+          for pair in "Cargo.toml=$cargo" "src-tauri/tauri.conf.json=$tauri" "ui/package.json=$ui" "package.json=$root"; do
+            if [ "${pair#*=}" != "$want" ]; then
+              echo "::error::${pair%%=*} has version ${pair#*=}, but the tag is $TAG"
+              bad=1
+            fi
+          done
+          exit $bad
+
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          want="${TAG#v}"
+          # The body of the "## [x.y.z]" section, without its heading line.
+          awk -v v="$want" '
+            { sub(/\r$/, "") }
+            /^## \[/ { if (on) exit; on = (index($0, "[" v "]") == 4); next }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for $want; run git cliff first (see CONTRIBUTING.md)"
+            exit 1
+          fi
+          { echo 'body<<LUMZA_NOTES_EOF'; cat notes.md; echo 'LUMZA_NOTES_EOF'; } >> "$GITHUB_OUTPUT"
+
   release:
     name: ${{ matrix.target }}
+    needs: prepare
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -48,9 +102,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
+          # Without a tag (a manual run) the action only builds and publishes nothing.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: Lumza ${{ github.ref_name }}
-          releaseBody: See CHANGELOG.md for what changed in this release.
+          releaseBody: ${{ needs.prepare.outputs.notes }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
@@ -70,9 +125,23 @@ jobs:
           # LUMZA_DATA_DIR keeps settings next to the exe; the launcher sets it.
           Set-Content "$dir/Lumza.cmd" '@echo off' , 'set LUMZA_DATA_DIR=%~dp0data' , 'set LUMZA_NO_AUTOSTART=1' , 'start "" "%~dp0lumza.exe"'
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
-          gh release upload "${{ github.ref_name }}" "$dir.zip" --clobber
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            gh release upload "${{ github.ref_name }}" "$dir.zip" --clobber
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A manual run publishes nothing; keep the results where they can be downloaded and tried.
+      - name: Keep the dry-run results as artifacts
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumza-${{ matrix.target }}
+          path: |
+            ${{ matrix.out }}/bundle/nsis/*-setup.exe*
+            Lumza-portable-*.zip
+          if-no-files-found: error
+          retention-days: 7
 
 # Later, once releases are stable: add a winget-releaser step (vedantmgoyal9/winget-releaser)
 # and a Scoop manifest. Code signing (SignPath Foundation) needs an application first.
