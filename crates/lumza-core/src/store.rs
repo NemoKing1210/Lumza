@@ -32,7 +32,12 @@ pub struct General {
     pub show_values: String,
     /// Look for a newer release at start-up. The only network request the app makes.
     pub check_updates: bool,
+    /// One of `TRAY_ICONS`.
+    pub tray_icon: String,
 }
+
+/// Tray icon styles; the order is the order of the picker.
+pub const TRAY_ICONS: [&str; 6] = ["contrast", "sun", "moon", "monitor", "sliders", "color"];
 
 impl Default for General {
     fn default() -> Self {
@@ -43,6 +48,7 @@ impl Default for General {
             step: 2,
             show_values: "always".into(),
             check_updates: true,
+            tray_icon: TRAY_ICONS[0].into(),
         }
     }
 }
@@ -342,6 +348,9 @@ impl Settings {
         }
         if !["hover", "always"].contains(&self.general.show_values.as_str()) {
             self.general.show_values = "always".into();
+        }
+        if !TRAY_ICONS.contains(&self.general.tray_icon.as_str()) {
+            self.general.tray_icon = TRAY_ICONS[0].into();
         }
         for m in self.monitors.values_mut() {
             if m.color.as_deref().is_some_and(|c| !is_hex_color(c)) {
@@ -706,6 +715,11 @@ mod tests {
         assert_eq!(r.general.language, "de");
         let r = s.update(&json!({"general": {"language": "klingon"}})).unwrap();
         assert_eq!(r.general.language, "auto");
+        assert_eq!(r.general.tray_icon, "contrast");
+        let r = s.update(&json!({"general": {"trayIcon": "sun"}})).unwrap();
+        assert_eq!(r.general.tray_icon, "sun");
+        let r = s.update(&json!({"general": {"trayIcon": "../evil"}})).unwrap();
+        assert_eq!(r.general.tray_icon, "contrast");
         assert!(s.update(&json!({"general": {"autostart": "yes"}})).is_err());
         assert!(s.get().general.autostart, "failed patch must not change anything");
     }

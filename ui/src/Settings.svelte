@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    applyProfile, FEATURES, checkForUpdates, exportSettings, getAbout, importSettings, installUpdate, openLogs, openRepo, resetSettings, getHotkeyStatus, getMonitors, hotkeysPause, listen, PROFILE_ICONS, MONITOR_ICONS, MONITOR_COLORS, NUMBER_BADGE, badgeStyle,
+    applyProfile, TRAY_ICONS, FEATURES, checkForUpdates, exportSettings, getAbout, importSettings, installUpdate, openLogs, openRepo, resetSettings, getHotkeyStatus, getMonitors, hotkeysPause, listen, PROFILE_ICONS, MONITOR_ICONS, MONITOR_COLORS, NUMBER_BADGE, badgeStyle,
     saveCurrentAsProfile, updateSettings,
     type About, type FeatureName, type Hotkey, type HotkeyAction, type MonitorDto, type Profile,
   } from "./ipc";
@@ -319,6 +319,37 @@
   const monitorName = (id: string) => monitors.find((m) => m.id === id)?.name ?? t("set.unplugged");
 </script>
 
+<!-- Previews of the tray glyphs; keep the shapes in step with src-tauri/icons/tray-*.png. -->
+{#snippet trayGlyph(key: string)}
+  <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+    {#if key === "contrast"}
+      <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="2.6" />
+      <path d="M16 3a13 13 0 0 0 0 26z" fill="currentColor" />
+    {:else if key === "sun"}
+      <circle cx="16" cy="16" r="6.2" fill="currentColor" />
+      <g stroke="currentColor" stroke-width="2.8" stroke-linecap="round">
+        <path d="M16 3.4v2.8M16 25.8v2.8M3.4 16h2.8M25.8 16h2.8M7.1 7.1l2 2M22.9 22.9l2 2M7.1 24.9l2-2M22.9 9.1l2-2" />
+      </g>
+    {:else if key === "moon"}
+      <path d="M17.6 3.6A12.5 12.5 0 1 0 28.4 21.4 11 11 0 0 1 17.6 3.6z" fill="currentColor" />
+    {:else if key === "monitor"}
+      <rect x="3.75" y="5.75" width="24.5" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2.5" />
+      <circle cx="16" cy="13.5" r="3.2" fill="currentColor" />
+      <path d="M14 21h4v5h-4z" fill="currentColor" />
+      <path d="M10 27.2h12" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" />
+    {:else if key === "sliders"}
+      <g stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+        <path d="M3.5 7.5H15.6M26.4 7.5h2.1M3.5 16h2.5M16 16h12.5M3.5 24.5h9.5M23 24.5h5.5" />
+      </g>
+      <circle cx="21" cy="7.5" r="4" fill="currentColor" /><circle cx="11" cy="16" r="4" fill="currentColor" /><circle cx="18" cy="24.5" r="4" fill="currentColor" />
+    {:else}
+      <rect x="1" y="1" width="30" height="30" rx="8" fill="#14233f" />
+      <circle cx="16" cy="16" r="9.5" fill="none" stroke="#ffb020" stroke-width="2" />
+      <path d="M16 6.5a9.5 9.5 0 0 0 0 19z" fill="#ffb020" />
+    {/if}
+  </svg>
+{/snippet}
+
 <div class="window">
 <TitleBar />
 <div class="shell">
@@ -349,6 +380,17 @@
             <option value="dark">{t("set.themeDark")}</option>
           </select>
         </label>
+        <div class="line">
+          <span><b>{t("set.trayIcon")}</b><small>{t("set.trayIconHint")}</small></span>
+          <div class="trayicons" role="radiogroup" aria-label={t("set.trayIcon")}>
+            {#each TRAY_ICONS as key (key)}
+              <button class="icon pick tray" class:on={g.trayIcon === key} role="radio" aria-checked={g.trayIcon === key}
+                aria-label={t("set.trayIcon." + key)} title={t("set.trayIcon." + key)} onclick={() => setGeneral({ trayIcon: key })}>
+                {@render trayGlyph(key)}
+              </button>
+            {/each}
+          </div>
+        </div>
         <label class="line">
           <span><b>{t("set.language")}</b><small>{t("set.languageHint")}</small></span>
           <select value={g.language} onchange={(e) => setGeneral({ language: e.currentTarget.value })}>

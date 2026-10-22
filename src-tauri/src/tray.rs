@@ -12,8 +12,36 @@ use crate::flyout::Flyout;
 use crate::i18n;
 use crate::scheduler::Scheduler;
 
-const ICON_FOR_DARK_TASKBAR: &[u8] = include_bytes!("../icons/tray-light.png");
-const ICON_FOR_LIGHT_TASKBAR: &[u8] = include_bytes!("../icons/tray-dark.png");
+/// Glyph styles come as a white (for a dark taskbar) and a black (for a light taskbar) PNG; "color" is
+/// the app icon and the same on both. Keep in step with `store::TRAY_ICONS`.
+struct IconStyle {
+    key: &'static str,
+    on_dark_taskbar: &'static [u8],
+    on_light_taskbar: &'static [u8],
+}
+
+macro_rules! glyph {
+    ($key:literal) => {
+        IconStyle {
+            key: $key,
+            on_dark_taskbar: include_bytes!(concat!("../icons/tray-", $key, "-light.png")),
+            on_light_taskbar: include_bytes!(concat!("../icons/tray-", $key, "-dark.png")),
+        }
+    };
+}
+
+const ICON_STYLES: [IconStyle; 6] = [
+    glyph!("contrast"),
+    glyph!("sun"),
+    glyph!("moon"),
+    glyph!("monitor"),
+    glyph!("sliders"),
+    IconStyle {
+        key: "color",
+        on_dark_taskbar: include_bytes!("../icons/32x32.png"),
+        on_light_taskbar: include_bytes!("../icons/32x32.png"),
+    },
+];
 
 /// `SystemUsesLightTheme` describes the taskbar/tray theme (not the apps theme).
 fn taskbar_is_light() -> bool {
@@ -25,14 +53,17 @@ fn taskbar_is_light() -> bool {
         .unwrap_or(false)
 }
 
-fn icon() -> Image<'static> {
-    let bytes = if taskbar_is_light() { ICON_FOR_LIGHT_TASKBAR } else { ICON_FOR_DARK_TASKBAR };
+fn icon(app: &AppHandle) -> Image<'static> {
+    let key = app.try_state::<Arc<SettingsStore>>().map(|s| s.get().general.tray_icon).unwrap_or_default();
+    let style = ICON_STYLES.iter().find(|s| s.key == key).unwrap_or(&ICON_STYLES[0]);
+    let bytes = if taskbar_is_light() { style.on_light_taskbar } else { style.on_dark_taskbar };
     Image::from_bytes(bytes).expect("tray icon")
 }
 
+/// Re-applies the icon after a taskbar theme or `general.trayIcon` change.
 pub fn update_icon(app: &AppHandle) {
     if let Some(t) = app.tray_by_id("main") {
-        let _ = t.set_icon(Some(icon()));
+        let _ = t.set_icon(Some(icon(app)));
     }
 }
 
@@ -89,7 +120,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let menu = build_menu(app)?;
 
     TrayIconBuilder::with_id("main")
-        .icon(icon())
+        .icon(icon(app))
         .tooltip("Lumza")
         .menu(&menu)
         .show_menu_on_left_click(false)

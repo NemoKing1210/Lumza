@@ -500,7 +500,10 @@ fn main() {
 
             // Profiles live in the tray menu, so it is rebuilt whenever settings change.
             let menu_handle = handle.clone();
-            app.listen("settings-changed", move |_| tray::rebuild_menu(&menu_handle));
+            app.listen("settings-changed", move |_| {
+                tray::rebuild_menu(&menu_handle);
+                tray::update_icon(&menu_handle);
+            });
             let menu_handle = handle.clone();
             app.listen("schedule-state", move |_| tray::rebuild_menu(&menu_handle));
             // Displays come and go with hot-plug and layout switches, so the display submenu follows them.

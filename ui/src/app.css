@@ -404,6 +404,8 @@ footer button.icon.on, footer button.icon.on:hover { background: var(--accent); 
 button.icon.pick { width: 32px; height: 32px; border-radius: 4px; background: transparent; color: var(--fg); }
 button.icon.pick:hover { background: var(--hover-fill); }
 button.icon.pick.on, button.icon.pick.on:hover { background: var(--hover-fill); color: var(--accent); box-shadow: inset 0 -3px 0 -1px var(--accent); }
+.trayicons { display: flex; gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
+button.icon.pick.tray { display: grid; place-items: center; }
 /* Text box: 4px radius, hairline stroke, accent underline on focus. */
 .padd .save input[type="text"] { height: 32px; padding: 0 10px; border: 1px solid var(--stroke); border-bottom-color: color-mix(in srgb, var(--fg) 45%, transparent); border-radius: 4px; background: var(--card-fill); }
 .padd .save input[type="text"]:focus { outline: none; border-bottom: 2px solid var(--accent); padding-bottom: 0; }

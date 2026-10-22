@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export type FeatureName = "brightness" | "contrast" | "volume";
+/** Keep in step with `TRAY_ICONS` in lumza-core's store.rs. */
+export const TRAY_ICONS = ["contrast", "sun", "moon", "monitor", "sliders", "color"] as const;
+export type TrayIconName = (typeof TRAY_ICONS)[number];
 export interface FeatureDto { feature: FeatureName; percent: number }
 export interface CalibrationDto { feature: FeatureName; min: number; max: number }
 export interface HdrDto { enabled: boolean }
@@ -65,7 +68,7 @@ export interface Settings {
   schemaVersion: number;
   general: {
     autostart: boolean; language: string; theme: "system" | "light" | "dark"; step: number;
-    showValues: "hover" | "always"; checkUpdates: boolean;
+    showValues: "hover" | "always"; checkUpdates: boolean; trayIcon: TrayIconName;
   };
   linked: { enabled: boolean; features: FeatureName[]; showIndividual: boolean };
   profiles: Profile[];
