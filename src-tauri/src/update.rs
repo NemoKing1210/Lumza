@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 /// Project page, opened from About. The updater endpoint in `tauri.conf.json` points at the same repo.
-pub const REPO_URL: &str = "https://github.com/OWNER/lumza";
+pub const REPO_URL: &str = "https://github.com/NemoKing1210/Lumza";
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]

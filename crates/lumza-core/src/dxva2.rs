@@ -35,6 +35,10 @@ impl Default for Timing {
     }
 }
 
+/// Real capabilities strings are a few hundred bytes to ~2 KB. The length comes from the monitor
+/// (or a dock/KVM in between), so it is bounded before it becomes an allocation.
+const MAX_CAPS_LEN: u32 = 64 * 1024;
+
 /// Owns one physical-monitor handle; destroyed when the last `Arc` goes away,
 /// so a worker mid-write never sees its handle invalidated by a rescan.
 struct Guard(HANDLE);
@@ -64,6 +68,9 @@ impl MonitorPort for Dxva2Port {
             let mut len = 0u32;
             if GetCapabilitiesStringLength(h, &mut len) == 0 || len == 0 {
                 return Err(Error::Timeout("capabilities length".into()));
+            }
+            if len > MAX_CAPS_LEN {
+                return Err(Error::Invalid(format!("capabilities string of {len} bytes")));
             }
             let mut buf = vec![0u8; len as usize];
             if CapabilitiesRequestAndCapabilitiesReply(h, &mut buf) == 0 {

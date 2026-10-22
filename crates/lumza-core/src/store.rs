@@ -6,9 +6,9 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -306,6 +306,27 @@ impl Default for Settings {
 /// UI languages that have a `locales/<code>.json`.
 pub const LANGUAGES: [&str; 7] = ["en", "ru", "es", "de", "fr", "pt", "zh"];
 
+/// A settings or cache file larger than this is not ours (real ones are a few KB); it is refused
+/// instead of being read into memory.
+pub const MAX_DOCUMENT_BYTES: usize = 1 << 20;
+/// Limits for user-entered text and lists. Far above any real use; they only stop an imported or
+/// hand-edited file from making every settings broadcast huge.
+const MAX_NAME_CHARS: usize = 80;
+const MAX_PROFILES: usize = 200;
+const MAX_HOTKEYS: usize = 64;
+const MAX_SCHEDULE_POINTS: usize = 200;
+
+/// Cut `s` to at most `max` characters.
+fn clip(s: &mut String, max: usize) {
+    if let Some((i, _)) = s.char_indices().nth(max) {
+        s.truncate(i);
+    }
+}
+
+fn is_icon_key(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 24 && s.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 fn is_hex_color(s: &str) -> bool {
     s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
@@ -326,15 +347,23 @@ impl Settings {
             if m.color.as_deref().is_some_and(|c| !is_hex_color(c)) {
                 m.color = None;
             }
-            if m.icon.as_deref().is_some_and(|i| i.is_empty() || i.len() > 24 || !i.chars().all(|c| c.is_ascii_alphanumeric())) {
+            if m.icon.as_deref().is_some_and(|i| !is_icon_key(i)) {
                 m.icon = None;
+            }
+            if let Some(n) = &mut m.custom_name {
+                clip(n, MAX_NAME_CHARS);
             }
             for r in m.calibration.values_mut() {
                 r.max = r.max.min(100);
                 r.min = r.min.min(r.max);
             }
         }
+        self.profiles.truncate(MAX_PROFILES);
         for p in &mut self.profiles {
+            clip(&mut p.name, MAX_NAME_CHARS);
+            if !is_icon_key(&p.icon) {
+                p.icon = "sun".into();
+            }
             for feats in p.values.values_mut() {
                 for v in feats.values_mut() {
                     *v = (*v).min(100);
@@ -345,8 +374,10 @@ impl Settings {
         if !["top", "bottom"].contains(&self.osd.position.as_str()) {
             self.osd.position = "bottom".into();
         }
+        self.hotkeys.truncate(MAX_HOTKEYS);
         for h in &mut self.hotkeys {
             h.accelerator = h.accelerator.trim().to_string();
+            clip(&mut h.accelerator, MAX_NAME_CHARS);
             match &mut h.action {
                 HotkeyAction::BrightnessAll { delta }
                 | HotkeyAction::Brightness { delta, .. }
@@ -366,7 +397,9 @@ impl Settings {
         if let Some(l) = &mut sc.location {
             l.lat = l.lat.clamp(-90.0, 90.0);
             l.lon = l.lon.clamp(-180.0, 180.0);
+            clip(&mut l.label, MAX_NAME_CHARS);
         }
+        sc.points.truncate(MAX_SCHEDULE_POINTS);
         for p in &mut sc.points {
             if let Trigger::Time { at } = &mut p.trigger {
                 if crate::schedule::parse_hhmm(at).is_none() {
@@ -443,12 +476,19 @@ pub fn merge_patch(target: &mut Value, patch: &Value) {
     }
 }
 
+/// Temp file + rename. Writers are serialised: two of them sharing one `.tmp` name would
+/// interleave their bytes, and the rename would publish the mix.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    static WRITING: Mutex<()> = Mutex::new(());
+    let _guard = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, bytes)?;
+    let mut file = fs::File::create(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?; // on disk before the rename, so a power cut cannot leave an empty file
+    drop(file);
     fs::rename(&tmp, path)
 }
 
@@ -467,7 +507,7 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn load(path: PathBuf) -> (Self, LoadOutcome) {
-        let (settings, outcome) = match fs::read_to_string(&path) {
+        let (settings, outcome) = match read_limited(&path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => (Settings::default(), LoadOutcome::Fresh),
             Err(_) => (Settings::default(), LoadOutcome::Recovered(quarantine(&path))),
             Ok(text) => match parse(&text) {
@@ -487,13 +527,18 @@ impl SettingsStore {
     }
 
     pub fn get(&self) -> Settings {
-        self.current.lock().unwrap().clone()
+        self.read(Settings::clone)
+    }
+
+    /// Look at the settings without copying them all: for hot paths that need one field.
+    pub fn read<R>(&self, f: impl FnOnce(&Settings) -> R) -> R {
+        f(&self.current.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Apply a JSON merge patch (IPC `update_settings(patch)`), validate, persist.
     /// On error nothing changes.
     pub fn update(&self, patch: &Value) -> Result<Settings> {
-        let mut cur = self.current.lock().unwrap();
+        let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         let mut doc = serde_json::to_value(&*cur).map_err(|e| Error::Invalid(e.to_string()))?;
         merge_patch(&mut doc, patch);
         let mut next: Settings =
@@ -507,17 +552,24 @@ impl SettingsStore {
     /// Replace everything with a settings document exported earlier (any schema version).
     /// A document that does not parse changes nothing.
     pub fn import(&self, text: &str) -> Result<Settings> {
+        if text.len() > MAX_DOCUMENT_BYTES {
+            return Err(Error::Invalid("settings file is too large".into()));
+        }
         let next = parse(text).ok_or_else(|| Error::Invalid("not a Lumza settings file".into()))?;
+        // Saved under the lock, like `update`, so a concurrent edit cannot be overwritten on disk
+        // by an older document.
+        let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         self.save(&next).map_err(|e| Error::Os(e.to_string()))?;
-        *self.current.lock().unwrap() = next.clone();
+        *cur = next.clone();
         Ok(next)
     }
 
     /// Factory defaults. Unplugged monitors' names and calibration are forgotten too.
     pub fn reset(&self) -> Result<Settings> {
         let next = Settings::default();
+        let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         self.save(&next).map_err(|e| Error::Os(e.to_string()))?;
-        *self.current.lock().unwrap() = next.clone();
+        *cur = next.clone();
         Ok(next)
     }
 
@@ -530,6 +582,14 @@ impl SettingsStore {
         let text = serde_json::to_vec_pretty(s).map_err(io::Error::other)?;
         write_atomic(&self.path, &text)
     }
+}
+
+/// Reads a text file of at most [`MAX_DOCUMENT_BYTES`]; a bigger one is an `InvalidData` error.
+pub fn read_limited(path: &Path) -> io::Result<String> {
+    if fs::metadata(path)?.len() > MAX_DOCUMENT_BYTES as u64 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "file is too large"));
+    }
+    fs::read_to_string(path)
 }
 
 fn parse(text: &str) -> Option<Settings> {
@@ -576,7 +636,7 @@ pub struct Cache {
 impl Cache {
     /// A missing or corrupt cache is not an error: it is only an optimisation.
     pub fn load(path: &Path) -> Self {
-        fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        read_limited(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
@@ -790,6 +850,50 @@ mod tests {
         assert_eq!((c.min, c.max), (90, 100));
         assert_eq!(r.profiles[0].values["A"]["brightness"], 100);
         assert_eq!(r.profiles[0].icon, "sun");
+    }
+
+    #[test]
+    fn oversized_text_and_lists_are_cut_and_big_files_refused() {
+        let dir = tmp("limits");
+        let (s, _) = SettingsStore::load(dir.join("settings.json"));
+        let long = "я".repeat(500);
+        let many: Vec<_> = (0..300).map(|i| json!({"id": format!("p{i}"), "name": long, "icon": "../x"})).collect();
+        let r = s.update(&json!({"monitors": {"A": {"customName": long}}, "profiles": many})).unwrap();
+        assert_eq!(r.monitors["A"].custom_name.as_deref().unwrap().chars().count(), MAX_NAME_CHARS);
+        assert_eq!(r.profiles.len(), MAX_PROFILES);
+        assert_eq!(r.profiles[0].name.chars().count(), MAX_NAME_CHARS);
+        assert_eq!(r.profiles[0].icon, "sun", "an icon key that is not a plain word is replaced");
+
+        let huge = " ".repeat(MAX_DOCUMENT_BYTES + 1);
+        assert!(s.import(&huge).is_err());
+        // an oversized file on disk is quarantined like a corrupt one
+        let p = dir.join("big.json");
+        fs::write(&p, &huge).unwrap();
+        let (s2, out) = SettingsStore::load(p);
+        assert!(matches!(out, LoadOutcome::Recovered(_)));
+        assert_eq!(s2.get(), Settings::default());
+    }
+
+    #[test]
+    fn concurrent_atomic_writes_never_publish_a_mix() {
+        let dir = tmp("atomic");
+        let path = dir.join("shared.json");
+        let writers: Vec<_> = (0..8u8)
+            .map(|n| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        write_atomic(&path, &vec![b'a' + n; 4096]).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(bytes.len(), 4096);
+        assert!(bytes.iter().all(|&b| b == bytes[0]), "file mixes the output of two writers");
     }
 
     #[test]

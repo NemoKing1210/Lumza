@@ -96,9 +96,10 @@ export const MONITOR_ICONS: Record<string, string> = {
 /** Icon key that shows the monitor number as the badge; no icon at all (the default) hides the badge. */
 export const NUMBER_BADGE = "number";
 
-/** Style for a monitor badge: the chosen colour (if any, the badge gradient is built from it) with white text. */
+/** Style for a monitor badge: the chosen colour (if any, the badge gradient is built from it) with white text.
+ * The backend only stores `#rrggbb`; the check keeps anything else out of a style attribute regardless. */
 export const badgeStyle = (m: { color: string | null }) =>
-  m.color ? `--b:${m.color};color:#fff` : undefined;
+  m.color && /^#[0-9a-f]{6}$/i.test(m.color) ? `--b:${m.color};color:#fff` : undefined;
 
 export const getMonitors =() => invoke<Snapshot>("get_monitors");
 export const refreshMonitors = () => invoke<void>("refresh_monitors");

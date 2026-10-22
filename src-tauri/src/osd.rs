@@ -1,9 +1,8 @@
 //! On-screen display: a small, click-through window that never takes focus.
 //! Created on first use and kept hidden afterwards so later shows are instant.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
@@ -23,14 +22,53 @@ pub struct OsdPayload {
 
 #[derive(Default)]
 pub struct Osd {
-    generation: AtomicU64,
     /// Payload for a page that finished loading after the event was emitted.
     pending: Mutex<Option<OsdPayload>>,
+    /// When the window should disappear. Pushed back by every new OSD, so a held hotkey keeps it up.
+    hide_at: Mutex<Option<Instant>>,
+    wake: Condvar,
+    hider: OnceLock<()>,
 }
 
 impl Osd {
     pub fn take_pending(&self) -> Option<OsdPayload> {
-        self.pending.lock().unwrap().take()
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+
+    fn deadline(&self) -> MutexGuard<'_, Option<Instant>> {
+        self.hide_at.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hide the window `after` from now; one thread serves every OSD (a held hotkey fires dozens a second).
+    fn hide_later(&self, app: &AppHandle, after: Duration) {
+        *self.deadline() = Some(Instant::now() + after);
+        self.wake.notify_one();
+        self.hider.get_or_init(|| {
+            let app = app.clone();
+            std::thread::Builder::new().name("osd-hide".into()).spawn(move || hide_loop(&app)).expect("spawn osd-hide");
+        });
+    }
+}
+
+fn hide_loop(app: &AppHandle) {
+    let Some(state) = app.try_state::<Osd>() else { return };
+    let mut at = state.deadline();
+    loop {
+        at = match *at {
+            None => state.wake.wait(at).unwrap_or_else(PoisonError::into_inner),
+            Some(t) if t > Instant::now() => {
+                state.wake.wait_timeout(at, t - Instant::now()).unwrap_or_else(PoisonError::into_inner).0
+            }
+            Some(_) => {
+                *at = None;
+                // Hidden while holding the lock: a newer OSD pushes the deadline before it shows the
+                // window, so it either lands before this check or waits for the hide and shows after it.
+                if let Some(w) = app.get_webview_window("osd") {
+                    let _ = w.hide();
+                }
+                at
+            }
+        };
     }
 }
 
@@ -68,7 +106,7 @@ pub fn show(app: &AppHandle, payload: OsdPayload, position: &str, duration_ms: u
         }
     };
 
-    *state.pending.lock().unwrap() = Some(payload.clone());
+    *state.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(payload.clone());
     let _ = win.emit("osd-show", payload);
 
     let scale = win.scale_factor().unwrap_or(1.0);
@@ -87,19 +125,6 @@ pub fn show(app: &AppHandle, payload: OsdPayload, position: &str, duration_ms: u
         };
         let _ = win.set_position(PhysicalPosition::new(x, y));
     }
+    state.hide_later(app, Duration::from_millis(duration_ms as u64));
     let _ = win.show();
-
-    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(duration_ms as u64));
-        // A newer OSD may have been shown meanwhile; only the latest one hides the window.
-        if let Some(state) = app.try_state::<Osd>() {
-            if state.generation.load(Ordering::SeqCst) == generation {
-                if let Some(w) = app.get_webview_window("osd") {
-                    let _ = w.hide();
-                }
-            }
-        }
-    });
 }

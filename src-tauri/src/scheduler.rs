@@ -3,7 +3,8 @@
 //! or a nudge from settings / monitor / clock events. There is no polling timer.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use lumza_core::schedule::{evaluate, format_hhmm, sun_times, Evaluation, ResolvedPoint, DAY};
@@ -164,17 +165,28 @@ impl Scheduler {
         this
     }
 
+    /// Poison-tolerant: `nudge` and friends are called from the event loop, where a panic would
+    /// take the whole app down because the scheduler thread once panicked.
+    fn inner(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn run(&self) {
         loop {
-            let wait = self.tick();
-            let mut g = self.inner.lock().unwrap();
+            // A panic in one evaluation must not end the thread for good: the schedule would
+            // silently stop until the app is restarted. Try again in a minute instead.
+            let wait = catch_unwind(AssertUnwindSafe(|| self.tick())).unwrap_or_else(|_| {
+                tracing::error!("schedule evaluation panicked; retrying in a minute");
+                Some(Duration::from_secs(60))
+            });
+            let mut g = self.inner();
             if g.nudge {
                 g.nudge = false;
                 continue;
             }
             g = match wait {
-                Some(d) => self.cv.wait_timeout(g, d.min(MAX_SLEEP)).unwrap().0,
-                None => self.cv.wait(g).unwrap(),
+                Some(d) => self.cv.wait_timeout(g, d.min(MAX_SLEEP)).unwrap_or_else(PoisonError::into_inner).0,
+                None => self.cv.wait(g).unwrap_or_else(PoisonError::into_inner),
             };
             g.nudge = false;
         }
@@ -182,12 +194,12 @@ impl Scheduler {
 
     /// Re-evaluate now (settings edited, monitors (re)appeared, clock changed, pause ended).
     pub fn nudge(&self) {
-        self.inner.lock().unwrap().nudge = true;
+        self.inner().nudge = true;
         self.cv.notify_one();
     }
 
     pub fn state(&self) -> ScheduleState {
-        self.inner.lock().unwrap().last_state.clone()
+        self.inner().last_state.clone()
     }
 
     /// Plan for the current moment, or `None` when the schedule has nothing to do.
@@ -206,7 +218,7 @@ impl Scheduler {
         let Some(ctrl) = self.app.try_state::<Arc<Controller>>() else { return Some(Duration::from_secs(1)) };
         let settings = store.get();
         if !settings.schedule.enabled {
-            self.inner.lock().unwrap().pause = None;
+            self.inner().pause = None;
             self.publish(ScheduleState::default());
             return None;
         }
@@ -228,7 +240,7 @@ impl Scheduler {
 
         // Pause bookkeeping.
         let pause = {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner();
             if g.pause.as_ref().is_some_and(|p| now.epoch_secs >= p.until_epoch) {
                 g.pause = None;
             }
@@ -262,7 +274,7 @@ impl Scheduler {
 
     fn publish(&self, state: ScheduleState) {
         let changed = {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner();
             let changed = g.last_state != state;
             g.last_state = state.clone();
             changed
@@ -280,14 +292,13 @@ impl Scheduler {
             None => ev.next_trigger_in,
         };
         let label = format_hhmm(now.minute + delta_min);
-        self.inner.lock().unwrap().pause =
-            Some(Pause { until_epoch: now.epoch_secs + (delta_min * 60.0).ceil() as u64, label });
+        self.inner().pause = Some(Pause { until_epoch: now.epoch_secs + (delta_min * 60.0).ceil() as u64, label });
         self.nudge();
     }
 
     /// Resume now; the value that is right for this moment is applied immediately.
     pub fn resume(&self) {
-        self.inner.lock().unwrap().pause = None;
+        self.inner().pause = None;
         self.nudge();
     }
 
@@ -316,16 +327,22 @@ impl Scheduler {
     /// The user changed a value by hand: pause according to the schedule's setting (spec §4.4).
     pub fn note_manual(&self) {
         let Some(store) = self.app.try_state::<Arc<SettingsStore>>() else { return };
-        let sc = store.get().schedule;
-        if !sc.enabled || sc.points.is_empty() || sc.pause_on_manual == "off" {
+        // Runs on every slider tick: read the few fields needed instead of cloning all settings.
+        let (active, minutes, pause_minutes) = store.read(|s| {
+            let sc = &s.schedule;
+            let active = sc.enabled && !sc.points.is_empty() && sc.pause_on_manual != "off";
+            (active, sc.pause_on_manual == "minutes", sc.pause_minutes)
+        });
+        if !active {
             return;
         }
-        if self.inner.lock().unwrap().pause.is_some() {
+        if self.inner().pause.is_some() {
             return; // already paused: do not slide the end time on every slider tick
         }
-        match sc.pause_on_manual.as_str() {
-            "minutes" => self.pause(Some(sc.pause_minutes)),
-            _ => self.pause(None),
+        if minutes {
+            self.pause(Some(pause_minutes));
+        } else {
+            self.pause(None);
         }
     }
 

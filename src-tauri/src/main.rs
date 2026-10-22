@@ -92,7 +92,9 @@ fn set_hdr(c: State<Arc<Controller>>, monitor_id: String, on: bool) {
 
 #[tauri::command]
 fn fit_flyout(win: WebviewWindow, f: State<Flyout>, height: f64) {
-    f.fit(&win, height);
+    if height.is_finite() {
+        f.fit(&win, height);
+    }
 }
 
 #[tauri::command]
@@ -162,7 +164,7 @@ async fn import_settings(
             .await
             .map_err(|e| e.to_string())?;
     let Some(path) = picked else { return Ok(false) };
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let text = lumza_core::store::read_limited(&path).map_err(|e| e.to_string())?;
     let old = s.get();
     let new = s.import(&text).map_err(|e| e.to_string())?;
     after_settings_change(&app, &c, &old, &new);

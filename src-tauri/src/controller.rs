@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use lumza_core::link;
@@ -57,14 +57,21 @@ impl Worker {
             .name(format!("ddc-{name}"))
             .spawn(move || loop {
                 let job = {
-                    let mut q = s.q.lock().unwrap();
+                    let mut q = lock(&s.q);
                     while q.writes.is_empty() && !q.probe && !q.read && !q.stop {
-                        q = s.cv.wait(q).unwrap();
+                        q = s.cv.wait(q).unwrap_or_else(PoisonError::into_inner);
                     }
                     if q.writes.is_empty() && !q.probe && !q.read {
                         return; // stopped and drained
                     }
-                    std::mem::take(&mut *q)
+                    // `stop` stays set: taking the whole queue would clear it, and the worker (with
+                    // its monitor handle) would then wait forever for a wake-up that never comes.
+                    Queue {
+                        writes: std::mem::take(&mut q.writes),
+                        probe: std::mem::take(&mut q.probe),
+                        read: std::mem::take(&mut q.read),
+                        stop: false,
+                    }
                 };
                 // A panic in one monitor's DDC code must not take the app down.
                 let r = catch_unwind(AssertUnwindSafe(|| run_job(port.as_mut(), job, &cb)));
@@ -77,7 +84,7 @@ impl Worker {
     }
 
     fn write(&self, f: Feature, raw: u32) {
-        let mut q = self.shared.q.lock().unwrap();
+        let mut q = lock(&self.shared.q);
         match q.writes.iter_mut().find(|(g, _)| *g == f) {
             Some(e) => e.1 = raw,
             None => q.writes.push((f, raw)),
@@ -86,21 +93,27 @@ impl Worker {
     }
 
     fn probe(&self) {
-        self.shared.q.lock().unwrap().probe = true;
+        lock(&self.shared.q).probe = true;
         self.shared.cv.notify_one();
     }
 
     fn read(&self) {
-        self.shared.q.lock().unwrap().read = true;
+        lock(&self.shared.q).read = true;
         self.shared.cv.notify_one();
     }
 }
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.shared.q.lock().unwrap().stop = true;
+        lock(&self.shared.q).stop = true;
         self.shared.cv.notify_one();
     }
+}
+
+/// Locks `m`, carrying on with the data if a panicking holder poisoned it: the state here is plain
+/// values, and one panic must not turn every later call into another panic in a tray app that runs for weeks.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn run_job(port: &mut dyn MonitorPort, job: Queue, cb: &Callback) {
@@ -271,7 +284,8 @@ impl Controller {
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        snapshot_of(&self.state.lock().unwrap(), &self.settings.get())
+        let st = lock(&self.state);
+        self.settings.read(|s| snapshot_of(&st, s))
     }
 
     /// Settings changed (names, order, visibility): push a fresh snapshot to the windows.
@@ -288,7 +302,7 @@ impl Controller {
             std::thread::sleep(CACHE_SAVE_DELAY);
             this.cache_save_pending.store(false, Ordering::SeqCst);
             let cache = {
-                let st = this.state.lock().unwrap();
+                let st = lock(&this.state);
                 Cache {
                     monitors: st
                         .monitors
@@ -327,14 +341,31 @@ impl Controller {
         std::thread::Builder::new()
             .name("scan".into())
             .spawn(move || {
+                // A panic inside a scan must not leave `rescanning` set, which would turn every
+                // later rescan request into a silent no-op.
+                struct OnPanic<'a>(&'a AtomicBool);
+                impl Drop for OnPanic<'_> {
+                    fn drop(&mut self) {
+                        if std::thread::panicking() {
+                            self.0.store(false, Ordering::SeqCst);
+                        }
+                    }
+                }
+                let _on_panic = OnPanic(&this.rescanning);
                 loop {
                     this.rescan_again.store(false, Ordering::SeqCst);
                     this.do_scan();
-                    if !this.rescan_again.load(Ordering::SeqCst) {
-                        break;
+                    if this.rescan_again.load(Ordering::SeqCst) {
+                        continue;
                     }
+                    this.rescanning.store(false, Ordering::SeqCst);
+                    // A request that slipped in between the check and the store would be lost:
+                    // take the flag back and run once more.
+                    if this.rescan_again.load(Ordering::SeqCst) && !this.rescanning.swap(true, Ordering::SeqCst) {
+                        continue;
+                    }
+                    break;
                 }
-                this.rescanning.store(false, Ordering::SeqCst);
             })
             .expect("spawn scan");
     }
@@ -343,7 +374,7 @@ impl Controller {
         let started = Instant::now();
         let scanned = {
             let ddc = self.settings.get().ddc;
-            let mut source = self.source.lock().unwrap();
+            let mut source = lock(&self.source);
             source.set_timing(ddc.write_delay_ms, ddc.read_delay_ms, ddc.retries);
             source.scan()
         };
@@ -354,7 +385,7 @@ impl Controller {
                 Vec::new()
             }
         };
-        let mut st = self.state.lock().unwrap();
+        let mut st = lock(&self.state);
         st.generation += 1;
         let generation = st.generation;
         st.scan_started = Some(started);
@@ -389,14 +420,14 @@ impl Controller {
             })
             .collect();
         tracing::info!(monitors = st.monitors.len(), ms = started.elapsed().as_millis() as u64, "enumerated");
-        let snap = snapshot_of(&st, &self.settings.get());
+        let snap = self.settings.read(|s| snapshot_of(&st, s));
         drop(st);
         let _ = self.app.emit("monitors-changed", snap);
         self.refresh_hdr(false);
     }
 
     fn on_event(self: &Arc<Self>, generation: u64, id: &str, ev: Event) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = lock(&self.state);
         if st.generation != generation {
             return; // event from a worker of a previous scan
         }
@@ -418,7 +449,7 @@ impl Controller {
                     }
                 }
                 let all_probed = !st.scanning;
-                let snap = snapshot_of(&st, &self.settings.get());
+                let snap = self.settings.read(|s| snapshot_of(&st, s));
                 drop(st);
                 let _ = self.app.emit("monitors-changed", snap);
                 self.schedule_cache_save();
@@ -450,7 +481,7 @@ impl Controller {
     /// Re-read current values in the background (monitor buttons may have changed them).
     pub fn reload_values(self: &Arc<Self>) {
         {
-            let st = self.state.lock().unwrap();
+            let st = lock(&self.state);
             for m in st.monitors.iter().filter(|m| m.probed) {
                 m.worker.read();
             }
@@ -464,17 +495,17 @@ impl Controller {
     /// `force` pushes it anyway, so a switch whose change was refused snaps back.
     fn refresh_hdr(&self, force: bool) {
         let devices: Vec<(String, String)> = {
-            let st = self.state.lock().unwrap();
+            let st = lock(&self.state);
             st.monitors.iter().map(|m| (m.info.id.clone(), m.info.device.clone())).collect()
         };
         let results: Vec<(String, Option<HdrState>)> = {
-            let mut source = self.source.lock().unwrap();
+            let mut source = lock(&self.source);
             devices.into_iter().map(|(id, device)| (id, source.hdr_state(&device))).collect()
         };
-        let mut st = self.state.lock().unwrap();
+        let mut st = lock(&self.state);
         let changed = merge_hdr(&mut st.hdr, results);
         if changed || force {
-            let snap = snapshot_of(&st, &self.settings.get());
+            let snap = self.settings.read(|s| snapshot_of(&st, s));
             drop(st);
             let _ = self.app.emit("monitors-changed", snap);
         }
@@ -483,8 +514,7 @@ impl Controller {
     /// Switch HDR on or off for one monitor. Unknown monitors are ignored (hot-unplug).
     /// A refused change raises `hdr-failed`; either way the real state is pushed back.
     pub fn set_hdr(self: &Arc<Self>, id: &str, on: bool) {
-        let Some(device) =
-            self.state.lock().unwrap().monitors.iter().find(|m| m.info.id == id).map(|m| m.info.device.clone())
+        let Some(device) = lock(&self.state).monitors.iter().find(|m| m.info.id == id).map(|m| m.info.device.clone())
         else {
             return;
         };
@@ -492,7 +522,7 @@ impl Controller {
         std::thread::Builder::new()
             .name("hdr".into())
             .spawn(move || {
-                let res = this.source.lock().unwrap().set_hdr(&device, on);
+                let res = lock(&this.source).set_hdr(&device, on);
                 if let Err(e) = res {
                     tracing::warn!(error = %e, "HDR change failed");
                     let _ = this.app.emit("hdr-failed", ());
@@ -505,7 +535,7 @@ impl Controller {
     /// Set one feature of one monitor (0–100 %). Unknown monitors are ignored: a
     /// hot-unplug during a drag must not surface as an error (spec §9).
     pub fn set_value(self: &Arc<Self>, id: &str, feature: Feature, percent: u8) {
-        let applied = queue_write(&mut self.state.lock().unwrap(), id, feature, percent);
+        let applied = queue_write(&mut lock(&self.state), id, feature, percent);
         if applied.is_some() {
             self.schedule_cache_save();
         }
@@ -518,7 +548,7 @@ impl Controller {
         let settings = self.settings.get();
         let mut changed = Vec::new();
         {
-            let mut st = self.state.lock().unwrap();
+            let mut st = lock(&self.state);
             let ids: Vec<String> = st
                 .monitors
                 .iter()
@@ -549,7 +579,7 @@ impl Controller {
         };
         let mut changed = Vec::new();
         {
-            let mut st = self.state.lock().unwrap();
+            let mut st = lock(&self.state);
             for (id, feats) in &profile.values {
                 for (name, value) in feats {
                     let Ok(f) = name.parse::<Feature>() else { continue };
@@ -574,7 +604,7 @@ impl Controller {
         let mut changed: Vec<(String, u8)> = Vec::new();
         let label;
         {
-            let mut st = self.state.lock().unwrap();
+            let mut st = lock(&self.state);
             let ids: Vec<String> = st
                 .monitors
                 .iter()
@@ -619,7 +649,7 @@ impl Controller {
 
     /// Connected, answering monitors and the features they have, for the scheduler.
     pub fn schedule_monitors(&self) -> Vec<SchedMonitor> {
-        let st = self.state.lock().unwrap();
+        let st = lock(&self.state);
         st.monitors
             .iter()
             .filter(|m| m.probed)
@@ -635,7 +665,7 @@ impl Controller {
     pub fn apply_scheduled(self: &Arc<Self>, values: &[(String, Feature, u8)]) -> usize {
         let mut changed = Vec::new();
         {
-            let mut st = self.state.lock().unwrap();
+            let mut st = lock(&self.state);
             for (id, f, v) in values {
                 let same = st
                     .monitors
@@ -662,7 +692,7 @@ impl Controller {
 
     /// Current value of every feature of every connected monitor, for "save as profile".
     pub fn current_values(&self) -> BTreeMap<String, BTreeMap<String, u8>> {
-        let st = self.state.lock().unwrap();
+        let st = lock(&self.state);
         st.monitors
             .iter()
             .filter(|m| m.probed && !m.features.is_empty())
@@ -788,6 +818,60 @@ fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A port whose first write blocks until released, and which reports when it is dropped
+    /// (a real port drops its monitor handle there).
+    struct GatedPort {
+        entered: std::sync::mpsc::Sender<()>,
+        gate: Arc<(Mutex<bool>, Condvar)>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl MonitorPort for GatedPort {
+        fn capabilities_string(&mut self) -> lumza_core::Result<String> {
+            Ok(String::new())
+        }
+        fn get_vcp(&mut self, _: u8) -> lumza_core::Result<VcpValue> {
+            Ok(VcpValue { current: 1, max: 100 })
+        }
+        fn set_vcp(&mut self, _: u8, _: u32) -> lumza_core::Result<()> {
+            let _ = self.entered.send(());
+            let (open, cv) = &*self.gate;
+            let mut open = open.lock().unwrap();
+            while !*open {
+                open = cv.wait(open).unwrap();
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for GatedPort {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn worker_stopped_with_jobs_pending_still_exits_and_releases_its_port() {
+        let (entered_tx, entered) = std::sync::mpsc::channel();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let port = GatedPort { entered: entered_tx, gate: gate.clone(), dropped: dropped.clone() };
+        let worker = Worker::spawn(Box::new(port), "test".into(), Arc::new(|_| {}));
+
+        worker.write(Feature::Brightness, 10); // the worker is now stuck inside this write
+        entered.recv_timeout(Duration::from_secs(5)).expect("worker started the first write");
+        worker.write(Feature::Contrast, 20); // pending when the worker is dropped (a rescan)
+        drop(worker);
+
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !dropped.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(dropped.load(Ordering::SeqCst), "the worker thread leaked its port");
+    }
 
     const ON: HdrState = HdrState { supported: true, enabled: true };
     const OFF: HdrState = HdrState { supported: true, enabled: false };

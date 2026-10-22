@@ -2,7 +2,9 @@
 //! conflicting combination never stops the others from working.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use lumza_core::store::{Hotkey, HotkeyAction, SettingsStore};
 use lumza_core::Feature;
@@ -50,9 +52,7 @@ pub fn apply(app: &AppHandle) {
         let result = gs.on_shortcut(shortcut, move |app, _, event| {
             // Windows auto-repeats a held hotkey: every Pressed is a step, Released is ignored.
             if event.state() == ShortcutState::Pressed {
-                let (app, action) = (app.clone(), action.clone());
-                // Window creation (OSD) must not block the event loop that delivers this callback.
-                std::thread::spawn(move || run(&app, &action));
+                dispatch(app, action.clone());
             }
         });
         match result {
@@ -68,6 +68,29 @@ pub fn apply(app: &AppHandle) {
         *status.0.lock().unwrap() = errors.clone();
     }
     let _ = app.emit("hotkey-status", errors);
+}
+
+/// Hands the action to the hotkey thread. Window creation (OSD) must not block the event loop that
+/// delivers the shortcut callback, and one thread means a held key's presses run in order and never
+/// race to create the OSD window twice (a thread per press did both).
+fn dispatch(app: &AppHandle, action: HotkeyAction) {
+    static QUEUE: OnceLock<Sender<(AppHandle, HotkeyAction)>> = OnceLock::new();
+    let tx = QUEUE.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<(AppHandle, HotkeyAction)>();
+        std::thread::Builder::new()
+            .name("hotkeys".into())
+            .spawn(move || {
+                for (app, action) in rx {
+                    // One bad action must not end the thread, or every hotkey would go dead.
+                    if catch_unwind(AssertUnwindSafe(|| run(&app, &action))).is_err() {
+                        tracing::error!("hotkey action panicked");
+                    }
+                }
+            })
+            .expect("spawn hotkeys");
+        tx
+    });
+    let _ = tx.send((app.clone(), action));
 }
 
 /// Unregister everything while the settings page records a new combination,

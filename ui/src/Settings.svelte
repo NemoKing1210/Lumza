@@ -388,7 +388,7 @@
             {#if m.icon}
               <span class="badge" class:icon={MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{MONITOR_ICONS[m.icon] ?? m.number}</span>
             {/if}
-            <input class="name" type="text" value={m.name} placeholder={m.originalName} aria-label={t("set.monitorNameAria", { name: m.originalName })}
+            <input class="name" type="text" value={m.name} placeholder={m.originalName} maxlength="80" aria-label={t("set.monitorNameAria", { name: m.originalName })}
               onchange={(e) => rename(m, e.currentTarget.value)} />
             <span class="order">
               <button class="icon" title={open ? t("set.collapse") : t("set.expand")} aria-label={t("set.monitorSettingsAria", { name: m.name })} aria-expanded={open}

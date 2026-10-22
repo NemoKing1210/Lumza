@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { FEATURE_GLYPH, type FeatureName } from "./ipc";
 
   let { feature, label, value = $bindable(), send, step = 2, disabled = false, onactive, preview = null }: {
@@ -42,6 +43,9 @@
     clearTimeout(timer); timer = undefined; queued = null;
     send(value);
   }
+
+  // A throttle timer outliving its slider (monitor unplugged mid-drag) would still fire a write.
+  onDestroy(() => { clearTimeout(timer); timer = undefined; queued = null; });
 
   function onwheel(e: WheelEvent) {
     e.preventDefault();

@@ -50,7 +50,7 @@ pub fn tf(lang: &str, key: &str, params: &[(&str, &str)]) -> String {
 pub fn lang_of(app: &tauri::AppHandle) -> String {
     use tauri::Manager;
     app.try_state::<std::sync::Arc<lumza_core::store::SettingsStore>>()
-        .map(|s| s.get().general.language)
+        .map(|s| s.read(|s| s.general.language.clone()))
         .unwrap_or_else(|| "en".into())
 }
 

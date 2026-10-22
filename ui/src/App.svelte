@@ -86,9 +86,16 @@
   }
 
   // `_deps` is never read: listing the state here makes the effect below re-run when any of it changes.
+  let lastFit = 0;
   async function fit(..._deps: unknown[]) {
     await tick();
-    if (root) fitFlyout(Math.ceil(root.getBoundingClientRect().height));
+    if (!root) return;
+    const h = Math.ceil(root.getBoundingClientRect().height);
+    // The effect and the ResizeObserver both fire for one layout change, and the entrance animation
+    // fires the observer on many frames: only a different height is worth a window resize.
+    if (h === lastFit) return;
+    lastFit = h;
+    fitFlyout(h);
   }
 
   $effect(() => { fit(visible, scanning, toast, showProfiles, linkedFeatures, profiles, sched); });
@@ -135,7 +142,7 @@
       listen<ScheduleState>("schedule-state", (e) => (sched = e.payload)),
       listen("write-failed", () => showToast(t("app.writeFailed"))),
       listen("hdr-failed", () => showToast(t("app.hdrFailed"))),
-      listen("flyout-shown", () => { shown = false; alt = !alt; setTimeout(() => (shown = true), 30); reloadValues(); }),
+      listen("flyout-shown", () => { shown = false; alt = !alt; lastFit = 0; setTimeout(() => (shown = true), 30); reloadValues(); }),
       listen("flyout-hidden", () => { shown = false; showProfiles = false; adding = false; appliedId = null; previewId = null; }),
     ]);
     return () => { ro.disconnect(); un.then((fns) => fns.forEach((f) => f())); };
@@ -220,12 +227,14 @@
           {#if m.hdr}
             <!-- Re-created on every snapshot: Svelte skips an unchanged `checked`, which would leave a flipped switch wrong. -->
             {#key hdrEpoch}
-              <label class="hdr">
-                <span>{t("app.hdr")}</span>
-                <input type="checkbox" class="switch" role="switch" aria-label="{t('app.hdr')} {m.name}"
-                  checked={m.hdr.enabled} disabled={m.stale}
-                  onchange={(e) => setHdr(m.id, e.currentTarget.checked)} />
-              </label>
+              <div class="card-foot">
+                <label class="hdr">
+                  <span>{t("app.hdr")}</span>
+                  <input type="checkbox" class="switch" role="switch" aria-label="{t('app.hdr')} {m.name}"
+                    checked={m.hdr.enabled} disabled={m.stale}
+                    onchange={(e) => setHdr(m.id, e.currentTarget.checked)} />
+                </label>
+              </div>
             {/key}
           {/if}
         </section>
