@@ -50,7 +50,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczMUU5RjYzQzkzQUJCQ0QKUldUTnV6ckpZNThlYzBTMEo3NjViVVVrNjJYTGpkRTFZNXZPaEs3eVNCUEwzTysyWVF0aWtHelcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU0QzUxRjc5NzUwRjE4ODAKUldTQUdBOTFlUi9GNUlQTFVOV1NBTHlPWktSU21ndHpSMlN4UXl5dDU0cmpLTWZWb3B0RXNxZDUK",
       "endpoints": [
         "https://github.com/NemoKing1210/Lumza/releases/latest/download/latest.json"
       ],
