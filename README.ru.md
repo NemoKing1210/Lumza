@@ -26,7 +26,7 @@
 
 <img src="assets/flyout.png" alt="Flyout Lumza с двумя мониторами" width="300">
 &nbsp;&nbsp;
-<img src="assets/flyout-linked.png" alt="Flyout Lumza со связанными ползунками и профилями" width="300">
+<img src="assets/flyout-linked.png" alt="Flyout Lumza со связанными ползунками" width="300">
 
 </div>
 
