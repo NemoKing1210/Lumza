@@ -535,11 +535,23 @@ fn main() {
             let scheduler = Scheduler::start(&handle);
             app.manage(scheduler.clone());
 
-            // Profiles live in the tray menu, so it is rebuilt whenever settings change.
+            // Profiles and language live in the tray menu and the icon style in the icon: rebuilt only when
+            // one of them changed, not for every renamed monitor or slider-adjacent setting.
             let menu_handle = handle.clone();
+            let menu_store = store.clone();
+            let tray_key = |s: &Settings| {
+                let profiles: Vec<_> = s.profiles.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
+                (profiles, s.general.language.clone(), s.general.tray_icon.clone())
+            };
+            let last_tray = Mutex::new(menu_store.read(tray_key));
             app.listen("settings-changed", move |_| {
-                tray::rebuild_menu(&menu_handle);
-                tray::update_icon(&menu_handle);
+                let now = menu_store.read(tray_key);
+                let mut last = last_tray.lock().unwrap_or_else(PoisonError::into_inner);
+                if *last != now {
+                    *last = now;
+                    tray::rebuild_menu(&menu_handle);
+                    tray::update_icon(&menu_handle);
+                }
             });
             let menu_handle = handle.clone();
             app.listen("schedule-state", move |_| tray::rebuild_menu(&menu_handle));
