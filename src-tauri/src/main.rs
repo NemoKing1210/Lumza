@@ -16,7 +16,7 @@ mod update;
 
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use controller::{Controller, Snapshot};
@@ -269,7 +269,7 @@ fn save_current_as_profile(
 
 #[tauri::command]
 fn get_hotkey_status(s: State<hotkeys::HotkeyStatus>) -> std::collections::BTreeMap<String, String> {
-    s.0.lock().unwrap().clone()
+    s.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
 #[tauri::command]
@@ -289,7 +289,7 @@ fn open_settings(app: AppHandle) {
 
 #[tauri::command]
 fn take_notice(n: State<Notice>) -> Option<String> {
-    n.0.lock().unwrap().take()
+    n.0.lock().unwrap_or_else(PoisonError::into_inner).take()
 }
 
 #[derive(Serialize)]
@@ -558,7 +558,7 @@ fn main() {
             }));
             app.listen("settings-changed", move |_| {
                 let g = sched_store.get();
-                let mut last = last.lock().unwrap();
+                let mut last = last.lock().unwrap_or_else(PoisonError::into_inner);
                 if last.0 != g.schedule || last.1 != g.profiles || last.2 != g.general.language {
                     *last = (g.schedule, g.profiles, g.general.language);
                     s.nudge();
@@ -571,7 +571,7 @@ fn main() {
             let last_theme = Mutex::new(store.get().general.theme);
             app.listen("settings-changed", move |_| {
                 let theme = theme_store.get().general.theme;
-                let mut last = last_theme.lock().unwrap();
+                let mut last = last_theme.lock().unwrap_or_else(PoisonError::into_inner);
                 if *last != theme {
                     if let Some(w) = theme_handle.get_webview_window("flyout") {
                         apply_backdrop(&w, &theme);
@@ -595,7 +595,7 @@ fn main() {
             let (hk_handle, hk_store) = (handle.clone(), store.clone());
             app.listen("settings-changed", move |_| {
                 let now = hk_state(hk_store.get());
-                let mut last = applied.lock().unwrap();
+                let mut last = applied.lock().unwrap_or_else(PoisonError::into_inner);
                 if !hotkeys::same(&last, &now) {
                     *last = now;
                     hotkeys::apply(&hk_handle);
@@ -633,13 +633,13 @@ fn main() {
             let tx = Mutex::new(tx);
             os_events::start(move |ev| match ev {
                 os_events::OsEvent::Devices => {
-                    let _ = tx.lock().unwrap().send(Scan::IfChanged);
+                    let _ = tx.lock().unwrap_or_else(PoisonError::into_inner).send(Scan::IfChanged);
                 }
                 os_events::OsEvent::Rescan => {
-                    let _ = tx.lock().unwrap().send(Scan::Full);
+                    let _ = tx.lock().unwrap_or_else(PoisonError::into_inner).send(Scan::Full);
                 }
                 os_events::OsEvent::Wake => {
-                    let _ = tx.lock().unwrap().send(Scan::Wake);
+                    let _ = tx.lock().unwrap_or_else(PoisonError::into_inner).send(Scan::Wake);
                 }
                 os_events::OsEvent::Theme => {
                     tray::update_icon(&tray_handle);

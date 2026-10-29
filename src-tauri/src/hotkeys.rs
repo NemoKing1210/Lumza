@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use lumza_core::store::{Hotkey, HotkeyAction, SettingsStore};
 use lumza_core::Feature;
@@ -65,7 +65,7 @@ pub fn apply(app: &AppHandle) {
     }
 
     if let Some(status) = app.try_state::<HotkeyStatus>() {
-        *status.0.lock().unwrap() = errors.clone();
+        *status.0.lock().unwrap_or_else(PoisonError::into_inner) = errors.clone();
     }
     let _ = app.emit("hotkey-status", errors);
 }

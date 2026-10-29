@@ -4,7 +4,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const FILES: usize = 5;
@@ -67,11 +67,11 @@ struct Shared(Arc<Mutex<Rotating>>);
 
 impl Write for Shared {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().write(buf)
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().unwrap().flush()
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).flush()
     }
 }
 

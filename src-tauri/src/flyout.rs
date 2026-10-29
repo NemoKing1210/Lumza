@@ -1,6 +1,6 @@
 //! Flyout window: pre-created hidden, shown near the tray icon, hidden on blur.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Rect, WebviewWindow};
@@ -66,14 +66,15 @@ impl Flyout {
             self.hide(&win);
             return;
         }
-        if self.last_hide.lock().unwrap().is_some_and(|t| t.elapsed() < REOPEN_GUARD) {
+        if self.last_hide.lock().unwrap_or_else(PoisonError::into_inner).is_some_and(|t| t.elapsed() < REOPEN_GUARD) {
             return;
         }
         if let Some(r) = tray_rect {
             let scale = win.scale_factor().unwrap_or(1.0);
             let p = r.position.to_physical::<f64>(scale);
             let s = r.size.to_physical::<f64>(scale);
-            *self.anchor.lock().unwrap() = Some((p.x + s.width / 2.0, p.y + s.height / 2.0));
+            *self.anchor.lock().unwrap_or_else(PoisonError::into_inner) =
+                Some((p.x + s.width / 2.0, p.y + s.height / 2.0));
         }
         self.place(&win);
         let _ = win.show();
@@ -87,7 +88,7 @@ impl Flyout {
             let _ = win.hide();
             let _ = win.emit("flyout-hidden", ());
         }
-        *self.last_hide.lock().unwrap() = Some(Instant::now());
+        *self.last_hide.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
     }
 
     /// Resize to content height (logical px), capped at 92 % of the work area, then re-anchor.
@@ -98,7 +99,7 @@ impl Flyout {
         let (Ok(inner), Ok(outer)) = (win.inner_size(), win.outer_size()) else { return };
         let width = outer.width as f64;
         let target = (h * scale).round() + (outer.height as f64 - inner.height as f64);
-        let mut slot = self.glide.lock().unwrap();
+        let mut slot = self.glide.lock().unwrap_or_else(PoisonError::into_inner);
         // Where the window is right now, which is mid-way when a change is still running.
         let current = slot.as_ref().map_or(outer.height as f64, |g| g.height_at(Instant::now()).0 as f64);
         if slot.as_ref().map_or(current == target, |g| g.to == target) {
@@ -107,7 +108,8 @@ impl Flyout {
         let (Some((x, y)), Some((_, wy, _, wh))) = (self.position(win, width, current), self.work_area(win)) else {
             return;
         };
-        let from_bottom = self.anchor.lock().unwrap().is_none_or(|(_, cy)| cy > wy + wh / 2.0);
+        let from_bottom =
+            self.anchor.lock().unwrap_or_else(PoisonError::into_inner).is_none_or(|(_, cy)| cy > wy + wh / 2.0);
         let edge = if from_bottom { y + current as i32 } else { y };
         let Ok(hwnd) = win.hwnd() else { return };
         let glide = Glide {
@@ -136,7 +138,7 @@ impl Flyout {
                 // `SetWindowPos` on a window of another thread waits for that thread's message loop, and
                 // `fit` runs on it while holding this lock: applying under the lock would deadlock the app.
                 let (glide, h, done) = {
-                    let mut g = slot.lock().unwrap();
+                    let mut g = slot.lock().unwrap_or_else(PoisonError::into_inner);
                     let Some(glide) = *g else { return };
                     let (h, done) = glide.height_at(Instant::now());
                     if done {
@@ -154,7 +156,7 @@ impl Flyout {
 
     /// Work area (x, y, w, h) in physical px of the monitor holding the tray icon.
     fn work_area(&self, win: &WebviewWindow) -> Option<(f64, f64, f64, f64)> {
-        let anchor = *self.anchor.lock().unwrap();
+        let anchor = *self.anchor.lock().unwrap_or_else(PoisonError::into_inner);
         let mon = match anchor {
             Some((x, y)) => win.app_handle().monitor_from_point(x, y).ok().flatten(),
             None => None,
@@ -177,7 +179,7 @@ impl Flyout {
         let (wx, wy, ww, wh) = self.work_area(win)?;
         let scale = win.scale_factor().unwrap_or(1.0);
         let m = MARGIN * scale;
-        let (cx, cy) = self.anchor.lock().unwrap().unwrap_or((wx + ww, wy + wh));
+        let (cx, cy) = self.anchor.lock().unwrap_or_else(PoisonError::into_inner).unwrap_or((wx + ww, wy + wh));
         let x = (cx - w / 2.0).clamp(wx + m, (wx + ww - w - m).max(wx + m));
         let y = if cy > wy + wh / 2.0 { wy + wh - h - m } else { wy + m };
         Some((x.round() as i32, y.round() as i32))
