@@ -14,6 +14,7 @@ const GLIDE: Duration = Duration::from_millis(260);
 const GLIDE_TICK: Duration = Duration::from_millis(8);
 
 /// One running height change; everything is in physical px so the glide thread needs no window queries.
+#[derive(Clone, Copy)]
 struct Glide {
     hwnd: isize,
     x: i32,
@@ -132,12 +133,19 @@ impl Flyout {
             let slot = self.glide.clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(GLIDE_TICK);
-                let mut g = slot.lock().unwrap();
-                let Some(glide) = g.as_ref() else { return };
-                let (h, done) = glide.height_at(Instant::now());
+                // `SetWindowPos` on a window of another thread waits for that thread's message loop, and
+                // `fit` runs on it while holding this lock: applying under the lock would deadlock the app.
+                let (glide, h, done) = {
+                    let mut g = slot.lock().unwrap();
+                    let Some(glide) = *g else { return };
+                    let (h, done) = glide.height_at(Instant::now());
+                    if done {
+                        *g = None;
+                    }
+                    (glide, h, done)
+                };
                 glide.apply(h);
                 if done {
-                    *g = None;
                     return;
                 }
             });
