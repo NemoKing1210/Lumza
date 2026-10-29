@@ -600,11 +600,17 @@ fn main() {
             });
 
             // Debounce bursts of OS events (a hot-plug fires several) into one rescan.
-            let (tx, rx) = mpsc::channel::<()>();
+            // The flag says a burst included a wake-up (resume, unlock): monitors may need a few more scans.
+            let (tx, rx) = mpsc::channel::<bool>();
             let c = controller.clone();
             std::thread::spawn(move || {
-                while rx.recv().is_ok() {
-                    while rx.recv_timeout(Duration::from_millis(800)).is_ok() {}
+                while let Ok(mut wake) = rx.recv() {
+                    while let Ok(w) = rx.recv_timeout(Duration::from_millis(800)) {
+                        wake |= w;
+                    }
+                    if wake {
+                        c.expect_slow_wake();
+                    }
                     c.rescan();
                 }
             });
@@ -613,7 +619,10 @@ fn main() {
             let tx = Mutex::new(tx);
             os_events::start(move |ev| match ev {
                 os_events::OsEvent::Rescan => {
-                    let _ = tx.lock().unwrap().send(());
+                    let _ = tx.lock().unwrap().send(false);
+                }
+                os_events::OsEvent::Wake => {
+                    let _ = tx.lock().unwrap().send(true);
                 }
                 os_events::OsEvent::Theme => {
                     tray::update_icon(&tray_handle);

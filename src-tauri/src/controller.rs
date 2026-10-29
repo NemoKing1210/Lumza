@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -188,6 +188,15 @@ struct State {
 /// Cache writes are delayed so a slider drag produces one disk write, not hundreds.
 const CACHE_SAVE_DELAY: Duration = Duration::from_secs(2);
 
+/// Monitors often need a few seconds after sleep or unlock before they answer DDC/CI.
+const WAKE_RETRY_DELAY: Duration = Duration::from_secs(4);
+const WAKE_RETRIES: u32 = 2;
+
+/// Spends one retry from `budget`; false when none is left.
+fn take_retry(budget: &AtomicU32) -> bool {
+    budget.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
+}
+
 pub struct Controller {
     app: AppHandle,
     source: Mutex<Box<dyn PortSource>>,
@@ -195,6 +204,8 @@ pub struct Controller {
     settings: Arc<SettingsStore>,
     cache_path: PathBuf,
     cache_save_pending: AtomicBool,
+    /// Rescans still allowed for monitors that stay silent after a wake-up; refilled by `expect_slow_wake`.
+    wake_retries: AtomicU32,
     rescanning: AtomicBool,
     rescan_again: AtomicBool,
     /// One display-layout switch at a time.
@@ -297,6 +308,7 @@ impl Controller {
             settings,
             cache_path,
             cache_save_pending: AtomicBool::new(false),
+            wake_retries: AtomicU32::new(0),
             rescanning: AtomicBool::new(false),
             rescan_again: AtomicBool::new(false),
             switching: Busy::new(),
@@ -349,6 +361,12 @@ impl Controller {
                 tracing::warn!(error = %e, "cache save failed");
             }
         });
+    }
+
+    /// Call on resume or unlock: if a monitor stays silent after the next scans, they are repeated a
+    /// couple of times instead of leaving it on "no DDC/CI" until the user presses refresh.
+    pub fn expect_slow_wake(&self) {
+        self.wake_retries.store(WAKE_RETRIES, Ordering::SeqCst);
     }
 
     /// Re-enumerate monitors off-thread. Requests arriving mid-scan coalesce into one more pass.
@@ -477,6 +495,7 @@ impl Controller {
                     }
                 }
                 let all_probed = !st.scanning;
+                let silent = all_probed && st.monitors.iter().any(|m| m.probed && m.features.is_empty());
                 let snap = self.settings.read(|s| snapshot_of(&st, s));
                 drop(st);
                 let _ = self.app.emit("monitors-changed", snap);
@@ -486,6 +505,14 @@ impl Controller {
                     self.seed_templates();
                     // Lets the schedule apply the value that is right for this moment.
                     let _ = self.app.emit("scan-finished", ());
+                }
+                if silent && take_retry(&self.wake_retries) {
+                    tracing::info!("a monitor gave no DDC/CI answer after wake-up; scanning again shortly");
+                    let this = self.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(WAKE_RETRY_DELAY);
+                        this.rescan();
+                    });
                 }
             }
             Event::Value(f, v) => {
@@ -1005,6 +1032,15 @@ mod tests {
         worker.read(); // runs after the write
         let first = ev_rx.recv_timeout(Duration::from_secs(5)).expect("a value after the write");
         assert_eq!(first, 50, "the stale read leaked through");
+    }
+
+    #[test]
+    fn wake_retries_run_out() {
+        let budget = AtomicU32::new(2);
+        assert!(take_retry(&budget));
+        assert!(take_retry(&budget));
+        assert!(!take_retry(&budget), "a monitor without DDC/CI must not be rescanned forever");
+        assert!(!take_retry(&budget));
     }
 
     const ON: HdrState = HdrState { supported: true, enabled: true };

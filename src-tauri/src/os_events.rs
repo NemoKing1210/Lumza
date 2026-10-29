@@ -17,6 +17,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub enum OsEvent {
     /// Resolution/topology change, hot-plug, resume, unlock: monitors must be re-enumerated.
     Rescan,
+    /// Resume from sleep or session unlock: like `Rescan`, but monitors may still be waking up.
+    Wake,
     /// Light/dark mode or accent colour changed.
     Theme,
     /// The system clock or time zone changed; the schedule must re-evaluate.
@@ -40,8 +42,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         WM_DISPLAYCHANGE => Some(OsEvent::Rescan),
         WM_TIMECHANGE => Some(OsEvent::Time),
         WM_DEVICECHANGE if wp.0 == DBT_DEVNODES_CHANGED => Some(OsEvent::Rescan),
-        WM_POWERBROADCAST if wp.0 == PBT_APMRESUMEAUTOMATIC => Some(OsEvent::Rescan),
-        WM_WTSSESSION_CHANGE if wp.0 == WTS_SESSION_UNLOCK => Some(OsEvent::Rescan),
+        WM_POWERBROADCAST if wp.0 == PBT_APMRESUMEAUTOMATIC => Some(OsEvent::Wake),
+        WM_WTSSESSION_CHANGE if wp.0 == WTS_SESSION_UNLOCK => Some(OsEvent::Wake),
         WM_SETTINGCHANGE if lp.0 != 0 => {
             let p = lp.0 as *const u16;
             let mut len = 0;
