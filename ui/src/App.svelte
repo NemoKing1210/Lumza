@@ -65,6 +65,20 @@
   let linkedKept = $state<FeatureName[]>([]);
   $effect(() => { if (linkedFeatures.length > 0) linkedKept = linkedFeatures; });
 
+  // One footer drawer at a time: turning "all monitors" on (here or in settings) folds the others away.
+  $effect(() => {
+    if (linkedOpen) { showProfiles = false; showModes = false; adding = false; }
+  });
+
+  /** Opens a drawer for the profile/display buttons; the "all monitors" drawer is a setting, so it is switched off. */
+  function openDrawer(which: "profiles" | "modes") {
+    const open = which === "profiles" ? !showProfiles : !showModes;
+    showProfiles = which === "profiles" && open;
+    showModes = which === "modes" && open;
+    adding = false;
+    if (open && linkedOpen) updateSettings({ linked: { enabled: false } });
+  }
+
   const previewProfile = $derived(profiles.find((p) => p.id === previewId));
   const previewOf = (m: MonitorDto, f: FeatureName): number | null => previewProfile?.values[m.id]?.[f] ?? null;
   /** Common slider preview: mean of the previewed values of the participants, like the common value itself. */
@@ -276,15 +290,15 @@
     <div class="drawer-inner">
       <section class="card pcard" aria-label={t("app.profiles")}>
         <div class="ptiles">
-          {#each profiles as p, k (p.id)}
-            <button class="ptile" class:done={appliedId === p.id} style="--k: {k}" onclick={() => pickProfile(p.id)}
+          {#each profiles as p (p.id)}
+            <button class="ptile" class:done={appliedId === p.id} onclick={() => pickProfile(p.id)}
               onpointerenter={() => (previewId = p.id)} onpointerleave={() => (previewId = null)}
               onfocus={() => (previewId = p.id)} onblur={() => (previewId = null)}>
               <span class="pic" aria-hidden="true">{appliedId === p.id ? "" : (PROFILE_ICONS[p.icon] ?? PROFILE_ICONS.sun)}</span>
               <span class="pname">{p.name}</span>
             </button>
           {/each}
-          <button class="ptile add" class:on={adding} style="--k: {profiles.length}" aria-expanded={adding}
+          <button class="ptile add" class:on={adding} aria-expanded={adding}
             onclick={() => (adding = !adding)}>
             <span class="pic" aria-hidden="true">{adding ? "" : ""}</span>
             <span class="pname">{t("app.profileNew")}</span>
@@ -326,13 +340,13 @@
 
   <footer class="stagger" style="--i: {visible.length + 2}">
     <button class="icon" class:on={showProfiles} title={t("app.profiles")} aria-label={t("app.profiles")} aria-expanded={showProfiles}
-      onclick={() => { showProfiles = !showProfiles; if (showProfiles) showModes = false; }}></button>
+      onclick={() => openDrawer("profiles")}></button>
     <button class="icon" class:on={app.settings?.linked.enabled} title={t("app.linkMonitors")} aria-label={t("app.linkMonitors")}
       aria-pressed={app.settings?.linked.enabled ?? false}
       onclick={() => updateSettings({ linked: { enabled: !app.settings?.linked.enabled } })}></button>
     {#if canSwitchModes}
       <button class="icon" class:on={showModes} title={t("app.displayMode")} aria-label={t("app.displayMode")} aria-expanded={showModes}
-        onclick={() => { showModes = !showModes; if (showModes) { showProfiles = false; adding = false; } }}>&#xEBC6;</button>
+        onclick={() => openDrawer("modes")}>&#xEBC6;</button>
     {/if}
     <span class="spacer"></span>
     <button class="icon" title={t("app.refreshMonitors")} aria-label={t("app.refreshMonitors")} onclick={() => refreshMonitors()}></button>
