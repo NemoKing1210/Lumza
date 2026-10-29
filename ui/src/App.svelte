@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import {
-    applyProfile, fitFlyout, getMonitors, hideFlyout, isSolid, listen, openSettings, PROFILE_ICONS, MONITOR_ICONS, badgeStyle,
+    applyProfile, resaveProfile, fitFlyout, getMonitors, hideFlyout, isSolid, listen, openSettings, PROFILE_ICONS, MONITOR_ICONS, badgeStyle,
     getDisplayModes, getScheduleState, refreshMonitors, reloadValues, resumeSchedule, sameMode, saveCurrentAsProfile,
     setDisplayMode, setHdr, setLinkedValue, setValue, takeNotice, uncalibrate, updateSettings,
     type DisplayModeDto, type DisplayModesDto, type FeatureName, type FeatureDto, type MonitorDto, type ScheduleState,
@@ -152,6 +152,12 @@
     appliedTimer = setTimeout(() => { appliedId = null; showProfiles = false; adding = false; }, 650);
   }
 
+  /** Overwrites a profile with what the sliders show now; the drawer stays open so it can be repeated. */
+  async function resave(id: string, name: string) {
+    await resaveProfile(id);
+    showToast(t("app.profileResaved", { name }));
+  }
+
   function pickMode(mode: DisplayModeDto) {
     setDisplayMode(mode);
     showModes = false;
@@ -291,12 +297,16 @@
       <section class="card pcard" aria-label={t("app.profiles")}>
         <div class="ptiles">
           {#each profiles as p (p.id)}
-            <button class="ptile" class:done={appliedId === p.id} onclick={() => pickProfile(p.id)}
-              onpointerenter={() => (previewId = p.id)} onpointerleave={() => (previewId = null)}
-              onfocus={() => (previewId = p.id)} onblur={() => (previewId = null)}>
-              <span class="pic" aria-hidden="true">{appliedId === p.id ? "" : (PROFILE_ICONS[p.icon] ?? PROFILE_ICONS.sun)}</span>
-              <span class="pname">{p.name}</span>
-            </button>
+            <div class="pwrap">
+              <button class="ptile" class:done={appliedId === p.id} onclick={() => pickProfile(p.id)}
+                onpointerenter={() => (previewId = p.id)} onpointerleave={() => (previewId = null)}
+                onfocus={() => (previewId = p.id)} onblur={() => (previewId = null)}>
+                <span class="pic" aria-hidden="true">{appliedId === p.id ? "" : (PROFILE_ICONS[p.icon] ?? PROFILE_ICONS.sun)}</span>
+                <span class="pname">{p.name}</span>
+              </button>
+              <button class="icon presave" title={t("app.profileResave")} aria-label="{t('app.profileResave')}: {p.name}"
+                onclick={() => resave(p.id, p.name)}>&#xE74E;</button>
+            </div>
           {/each}
           <button class="ptile add" class:on={adding} aria-expanded={adding}
             onclick={() => (adding = !adding)}>

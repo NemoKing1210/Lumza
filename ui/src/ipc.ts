@@ -122,9 +122,13 @@ export const setLinkedValue = (feature: FeatureName, value: number) =>
 export const applyProfile = (id: string) => invoke<boolean>("apply_profile", { id });
 export const saveCurrentAsProfile = (name: string, icon?: string) =>
   invoke<Settings>("save_current_as_profile", { name, icon });
+/** Overwrites a profile's values with the current ones (same monitors and features). */
+export const resaveProfile = (id: string) => invoke<Settings>("resave_profile", { id });
 export const fitFlyout = (height: number) => invoke<void>("fit_flyout", { height });
 export const hideFlyout = () => invoke<void>("hide_flyout");
 export const isSolid = () => invoke<boolean>("is_solid");
+/** Windows accent colour (`#rrggbb`): `light` for dark surfaces, `dark` for light ones; null when unavailable. */
+export const getAccent = () => invoke<{ light: string; dark: string } | null>("get_accent");
 export const getSettings = () => invoke<Settings>("get_settings");
 /** JSON merge patch: objects merge, `null` deletes a key, arrays are replaced whole. */
 export const updateSettings = (patch: unknown) => invoke<Settings>("update_settings", { patch });

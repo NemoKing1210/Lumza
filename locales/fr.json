@@ -29,6 +29,8 @@
   "app.profileNameAria": "Nom du nouveau profil",
   "app.profileNew": "Enregistrer",
   "app.profilePlaceholder": "Enregistrer les valeurs actuelles sous…",
+  "app.profileResave": "Mettre à jour avec les valeurs actuelles",
+  "app.profileResaved": "Profil « {name} » mis à jour",
   "app.profileSaved": "Profil « {name} » enregistré",
   "app.profiles": "Profils",
   "app.refreshMonitors": "Actualiser les moniteurs",

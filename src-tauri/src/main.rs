@@ -120,6 +120,26 @@ fn is_solid(f: State<Flyout>) -> bool {
     f.solid
 }
 
+/// Windows accent colour as the two shades WinUI uses: light on dark surfaces, dark on light ones.
+#[derive(Serialize)]
+struct Accent {
+    light: String,
+    dark: String,
+}
+
+#[tauri::command]
+fn get_accent() -> Option<Accent> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let palette = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent")
+        .and_then(|k| k.get_raw_value("AccentPalette"))
+        .ok()?
+        .bytes;
+    // Eight RGBA entries: light 3..1, accent, dark 1..3.
+    let hex = |i: usize| palette.get(i * 4..i * 4 + 3).map(|c| format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]));
+    Some(Accent { light: hex(1)?, dark: hex(4)? })
+}
+
 #[tauri::command]
 fn get_settings(s: State<Arc<SettingsStore>>) -> Settings {
     s.get()
@@ -267,6 +287,22 @@ fn save_current_as_profile(
     Ok(new)
 }
 
+/// "Save again": overwrites a profile's values with the current ones, for the monitors and features it already covers.
+#[tauri::command]
+fn resave_profile(
+    app: AppHandle,
+    s: State<Arc<SettingsStore>>,
+    c: State<Arc<Controller>>,
+    id: String,
+) -> Result<Settings, String> {
+    let mut profiles = s.get().profiles;
+    let profile = profiles.iter_mut().find(|p| p.id == id).ok_or("no such profile")?;
+    profile.values = profile.refreshed(&c.current_values());
+    let new = s.update(&serde_json::json!({ "profiles": profiles })).map_err(|e| e.to_string())?;
+    let _ = app.emit("settings-changed", &new);
+    Ok(new)
+}
+
 #[tauri::command]
 fn get_hotkey_status(s: State<hotkeys::HotkeyStatus>) -> std::collections::BTreeMap<String, String> {
     s.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
@@ -395,11 +431,11 @@ fn create_flyout(app: &tauri::App) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
-/// Mica/Acrylic behind the flyout, in the app's own theme: with "light" chosen on a dark system
-/// (or the reverse) a backdrop that follows the system would put light cards on a dark panel.
+/// Acrylic behind the flyout, in the app's own theme, like the taskbar flyouts of Windows 11 (Quick Settings,
+/// volume): on 11 it is the DWM system backdrop, so "Transparency effects" off and battery saver turn it into a
+/// solid fill by themselves. With "light" chosen on a dark system (or the reverse) a backdrop that follows the
+/// system would put light cards on a dark panel, hence the explicit dark flag.
 fn apply_backdrop(win: &WebviewWindow, theme: &str) -> bool {
-    // Always pass an explicit value: with `None` Mica keeps the dark-mode flag of the previous call,
-    // so going from "light" back to "system" on a dark Windows left a light panel under dark cards.
     let dark = match theme {
         "light" => false,
         "dark" => true,
@@ -407,8 +443,10 @@ fn apply_backdrop(win: &WebviewWindow, theme: &str) -> bool {
     };
     let _ = window_vibrancy::clear_mica(win);
     let _ = window_vibrancy::clear_acrylic(win);
-    let tint = if dark { (24, 24, 24, 160) } else { (243, 243, 245, 160) };
-    window_vibrancy::apply_mica(win, Some(dark)).is_ok() || window_vibrancy::apply_acrylic(win, Some(tint)).is_ok()
+    // Only here for its side effect of setting the window's dark-mode flag, which acrylic does not set.
+    let _ = window_vibrancy::apply_mica(win, Some(dark));
+    let tint = if dark { (32, 32, 32, 200) } else { (243, 243, 243, 200) };
+    window_vibrancy::apply_acrylic(win, Some(tint)).is_ok()
 }
 
 /// `AppsUseLightTheme`: the "app mode" that `prefers-color-scheme` follows in the WebView.
@@ -448,10 +486,12 @@ fn main() {
             hide_flyout,
             is_solid,
             get_settings,
+            get_accent,
             update_settings,
             set_linked_value,
             apply_profile,
             save_current_as_profile,
+            resave_profile,
             get_schedule_state,
             pause_schedule,
             resume_schedule,
@@ -655,6 +695,7 @@ fn main() {
                 }
                 os_events::OsEvent::Theme => {
                     tray::update_icon(&tray_handle);
+                    let _ = tray_handle.emit("system-theme-changed", ());
                     // "system" theme: the backdrop must follow Windows switching light/dark.
                     let theme = tray_handle.state::<Arc<SettingsStore>>().get().general.theme;
                     if theme == "system" {

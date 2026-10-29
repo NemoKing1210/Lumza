@@ -29,6 +29,8 @@
   "app.profileNameAria": "Имя нового профиля",
   "app.profileNew": "Сохранить текущие",
   "app.profilePlaceholder": "Сохранить текущие значения как…",
+  "app.profileResave": "Обновить текущими значениями",
+  "app.profileResaved": "Профиль «{name}» обновлён",
   "app.profileSaved": "Профиль «{name}» сохранён",
   "app.profiles": "Профили",
   "app.refreshMonitors": "Обновить мониторы",

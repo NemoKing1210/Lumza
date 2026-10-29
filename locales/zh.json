@@ -29,6 +29,8 @@
   "app.profileNameAria": "新配置文件名称",
   "app.profileNew": "保存当前",
   "app.profilePlaceholder": "将当前值另存为…",
+  "app.profileResave": "用当前值更新",
+  "app.profileResaved": "配置文件“{name}”已更新",
   "app.profileSaved": "配置文件“{name}”已保存",
   "app.profiles": "配置文件",
   "app.refreshMonitors": "刷新显示器",

@@ -266,6 +266,27 @@ pub struct Profile {
     pub values: BTreeMap<String, BTreeMap<String, u8>>,
 }
 
+impl Profile {
+    /// The profile's values re-read from `current`: the same monitors and features, at their present levels.
+    /// Entries `current` has no value for (a monitor that is unplugged) keep what was stored.
+    pub fn refreshed(
+        &self,
+        current: &BTreeMap<String, BTreeMap<String, u8>>,
+    ) -> BTreeMap<String, BTreeMap<String, u8>> {
+        self.values
+            .iter()
+            .map(|(monitor, features)| {
+                let now = current.get(monitor);
+                let features = features
+                    .iter()
+                    .map(|(f, old)| (f.clone(), now.and_then(|m| m.get(f)).copied().unwrap_or(*old)))
+                    .collect();
+                (monitor.clone(), features)
+            })
+            .collect()
+    }
+}
+
 impl Default for Profile {
     fn default() -> Self {
         Self { id: String::new(), name: String::new(), icon: "sun".into(), values: BTreeMap::new() }
@@ -662,6 +683,18 @@ impl Cache {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn refreshed_profile_keeps_its_scope_and_unplugged_values() {
+        let map = |pairs: &[(&str, &[(&str, u8)])]| -> BTreeMap<String, BTreeMap<String, u8>> {
+            pairs.iter().map(|(m, f)| (m.to_string(), f.iter().map(|(k, v)| (k.to_string(), *v)).collect())).collect()
+        };
+        let p =
+            Profile { values: map(&[("a", &[("brightness", 10)]), ("gone", &[("volume", 5)])]), ..Profile::default() };
+        // `a` also has contrast now, which the profile never covered; `gone` is not connected.
+        let current = map(&[("a", &[("brightness", 70), ("contrast", 40)]), ("b", &[("brightness", 1)])]);
+        assert_eq!(p.refreshed(&current), map(&[("a", &[("brightness", 70)]), ("gone", &[("volume", 5)])]));
+    }
+
     use super::*;
     use serde_json::json;
 
