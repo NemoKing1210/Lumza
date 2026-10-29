@@ -210,6 +210,8 @@ pub struct Controller {
     rescan_again: AtomicBool,
     /// Set by `rescan`: the next pass must rebuild the workers even if the monitors look unchanged.
     force_full: AtomicBool,
+    /// A background HDR refresh from `reload_values` is running.
+    hdr_refreshing: AtomicBool,
     /// One display-layout switch at a time.
     switching: Busy,
 }
@@ -314,6 +316,7 @@ impl Controller {
             rescanning: AtomicBool::new(false),
             rescan_again: AtomicBool::new(false),
             force_full: AtomicBool::new(false),
+            hdr_refreshing: AtomicBool::new(false),
             switching: Busy::new(),
         })
     }
@@ -569,8 +572,19 @@ impl Controller {
             }
         }
         // HDR may have been toggled in Windows (Win+Alt+B); DisplayConfig stays off the UI thread.
+        // One refresh at a time: it can wait seconds behind a display-layout switch for the source
+        // lock, and every flyout opening would otherwise park another thread there.
+        if self.hdr_refreshing.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let this = self.clone();
-        std::thread::Builder::new().name("hdr".into()).spawn(move || this.refresh_hdr(false)).expect("spawn hdr");
+        std::thread::Builder::new()
+            .name("hdr".into())
+            .spawn(move || {
+                this.refresh_hdr(false);
+                this.hdr_refreshing.store(false, Ordering::SeqCst);
+            })
+            .expect("spawn hdr");
     }
 
     /// Re-read every monitor's HDR state from Windows and push a snapshot when it changed.
