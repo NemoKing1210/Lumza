@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -23,8 +23,9 @@ use crate::display_modes::{Busy, DisplayModesDto};
 type Probe = Vec<(Feature, Option<VcpValue>)>;
 
 enum Event {
-    /// Result of the first read after a scan: which features answer at all.
-    Probed(Probe),
+    /// Result of the first read after a scan: which features answer at all. The flag is false when a
+    /// write was queued meanwhile, so the values read may already be out of date.
+    Probed(Probe, bool),
     Value(Feature, VcpValue),
     WriteFailed(Feature),
 }
@@ -45,6 +46,9 @@ struct Queue {
 struct Shared {
     q: Mutex<Queue>,
     cv: Condvar,
+    /// Counts queued writes. A read that began before a write must not report its value afterwards:
+    /// it would put the old value back over what the user just set.
+    writes: AtomicU64,
 }
 
 struct Worker {
@@ -53,7 +57,8 @@ struct Worker {
 
 impl Worker {
     fn spawn(mut port: Box<dyn MonitorPort>, name: String, cb: Callback) -> Self {
-        let shared = Arc::new(Shared { q: Mutex::new(Queue::default()), cv: Condvar::new() });
+        let shared =
+            Arc::new(Shared { q: Mutex::new(Queue::default()), cv: Condvar::new(), writes: AtomicU64::new(0) });
         let s = shared.clone();
         std::thread::Builder::new()
             .name(format!("ddc-{name}"))
@@ -76,7 +81,7 @@ impl Worker {
                     }
                 };
                 // A panic in one monitor's DDC code must not take the app down.
-                let r = catch_unwind(AssertUnwindSafe(|| run_job(port.as_mut(), job, &cb)));
+                let r = catch_unwind(AssertUnwindSafe(|| run_job(port.as_mut(), job, &cb, &s)));
                 if r.is_err() {
                     tracing::error!(monitor = %name, "DDC worker panicked; continuing");
                 }
@@ -91,6 +96,7 @@ impl Worker {
             Some(e) => e.1 = raw,
             None => q.writes.push((f, raw)),
         }
+        self.shared.writes.fetch_add(1, Ordering::SeqCst);
         self.shared.cv.notify_one();
     }
 
@@ -118,7 +124,10 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn run_job(port: &mut dyn MonitorPort, job: Queue, cb: &Callback) {
+fn run_job(port: &mut dyn MonitorPort, job: Queue, cb: &Callback, shared: &Shared) {
+    // Taken after the job left the queue, so its own writes are already counted.
+    let seen = shared.writes.load(Ordering::SeqCst);
+    let fresh = || shared.writes.load(Ordering::SeqCst) == seen;
     for (f, raw) in job.writes {
         if let Err(e) = port.set_vcp(f.vcp(), raw) {
             tracing::warn!(feature = %f, error = %e, "write failed");
@@ -131,11 +140,14 @@ fn run_job(port: &mut dyn MonitorPort, job: Queue, cb: &Callback) {
     }
     if job.probe {
         let res = Feature::ALL.iter().map(|&f| (f, port.get_vcp(f.vcp()).ok())).collect();
-        cb(Event::Probed(res));
+        cb(Event::Probed(res, fresh()));
     } else if job.read {
         for f in Feature::ALL {
+            // A value read before a newer write is dropped: the write is the truth now.
             if let Ok(v) = port.get_vcp(f.vcp()) {
-                cb(Event::Value(f, v));
+                if fresh() {
+                    cb(Event::Value(f, v));
+                }
             }
         }
     }
@@ -444,11 +456,17 @@ impl Controller {
         let started = st.scan_started;
         let Some(idx) = st.monitors.iter().position(|m| m.info.id == id) else { return };
         match ev {
-            Event::Probed(res) => {
+            Event::Probed(res, fresh) => {
                 let m = &mut st.monitors[idx];
+                let old = std::mem::take(&mut m.features);
                 m.features = res
                     .into_iter()
-                    .filter_map(|(f, v)| v.map(|v| FeatureState { feature: f, max: v.max, percent: v.percent() }))
+                    .filter_map(|(f, v)| {
+                        let v = v?;
+                        // Written to while probing: keep what the user set, take only the range.
+                        let kept = if fresh { None } else { old.iter().find(|o| o.feature == f).map(|o| o.percent) };
+                        Some(FeatureState { feature: f, max: v.max, percent: kept.unwrap_or_else(|| v.percent()) })
+                    })
                     .collect();
                 m.probed = true;
                 st.pending_probes = st.pending_probes.saturating_sub(1);
@@ -926,6 +944,67 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(dropped.load(Ordering::SeqCst), "the worker thread leaked its port");
+    }
+
+    /// One shared register. The first read reports it, then blocks until released: a read that
+    /// started before a later write and finishes after it.
+    struct SlowReadPort {
+        register: Arc<std::sync::atomic::AtomicU32>,
+        entered: std::sync::mpsc::Sender<()>,
+        gate: Arc<(Mutex<bool>, Condvar)>,
+        blocked: AtomicBool,
+    }
+
+    impl MonitorPort for SlowReadPort {
+        fn capabilities_string(&mut self) -> lumza_core::Result<String> {
+            Ok(String::new())
+        }
+        fn get_vcp(&mut self, _: u8) -> lumza_core::Result<VcpValue> {
+            let current = self.register.load(Ordering::SeqCst);
+            if !self.blocked.swap(true, Ordering::SeqCst) {
+                let _ = self.entered.send(());
+                let (open, cv) = &*self.gate;
+                let mut open = open.lock().unwrap();
+                while !*open {
+                    open = cv.wait(open).unwrap();
+                }
+            }
+            Ok(VcpValue { current, max: 100 })
+        }
+        fn set_vcp(&mut self, _: u8, value: u32) -> lumza_core::Result<()> {
+            self.register.store(value, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn read_started_before_a_write_does_not_report_the_old_value() {
+        let (entered_tx, entered) = std::sync::mpsc::channel();
+        let (ev_tx, ev_rx) = std::sync::mpsc::channel();
+        let ev_tx = Mutex::new(ev_tx);
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let port = SlowReadPort {
+            register: Arc::new(std::sync::atomic::AtomicU32::new(1)),
+            entered: entered_tx,
+            gate: gate.clone(),
+            blocked: AtomicBool::new(false),
+        };
+        let cb: Callback = Arc::new(move |ev| {
+            if let Event::Value(_, v) = ev {
+                let _ = ev_tx.lock().unwrap().send(v.current);
+            }
+        });
+        let worker = Worker::spawn(Box::new(port), "test".into(), cb);
+
+        worker.read();
+        entered.recv_timeout(Duration::from_secs(5)).expect("worker started the read");
+        worker.write(Feature::Brightness, 50); // the user moves the slider while the read is in flight
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+
+        worker.read(); // runs after the write
+        let first = ev_rx.recv_timeout(Duration::from_secs(5)).expect("a value after the write");
+        assert_eq!(first, 50, "the stale read leaked through");
     }
 
     const ON: HdrState = HdrState { supported: true, enabled: true };
