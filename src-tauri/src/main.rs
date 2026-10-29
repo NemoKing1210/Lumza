@@ -395,15 +395,27 @@ fn create_flyout(app: &tauri::App) -> tauri::Result<WebviewWindow> {
 /// Mica/Acrylic behind the flyout, in the app's own theme: with "light" chosen on a dark system
 /// (or the reverse) a backdrop that follows the system would put light cards on a dark panel.
 fn apply_backdrop(win: &WebviewWindow, theme: &str) -> bool {
+    // Always pass an explicit value: with `None` Mica keeps the dark-mode flag of the previous call,
+    // so going from "light" back to "system" on a dark Windows left a light panel under dark cards.
     let dark = match theme {
-        "light" => Some(false),
-        "dark" => Some(true),
-        _ => None, // "system": follow Windows
+        "light" => false,
+        "dark" => true,
+        _ => system_apps_dark(),
     };
     let _ = window_vibrancy::clear_mica(win);
     let _ = window_vibrancy::clear_acrylic(win);
-    let tint = if dark == Some(false) { (243, 243, 245, 160) } else { (24, 24, 24, 160) };
-    window_vibrancy::apply_mica(win, dark).is_ok() || window_vibrancy::apply_acrylic(win, Some(tint)).is_ok()
+    let tint = if dark { (24, 24, 24, 160) } else { (243, 243, 245, 160) };
+    window_vibrancy::apply_mica(win, Some(dark)).is_ok() || window_vibrancy::apply_acrylic(win, Some(tint)).is_ok()
+}
+
+/// `AppsUseLightTheme`: the "app mode" that `prefers-color-scheme` follows in the WebView.
+fn system_apps_dark() -> bool {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|k| k.get_value::<u32, _>("AppsUseLightTheme"))
+        .map(|v| v == 0)
+        .unwrap_or(false)
 }
 
 fn main() {
@@ -603,7 +615,16 @@ fn main() {
                 os_events::OsEvent::Rescan => {
                     let _ = tx.lock().unwrap().send(());
                 }
-                os_events::OsEvent::Theme => tray::update_icon(&tray_handle),
+                os_events::OsEvent::Theme => {
+                    tray::update_icon(&tray_handle);
+                    // "system" theme: the backdrop must follow Windows switching light/dark.
+                    let theme = tray_handle.state::<Arc<SettingsStore>>().get().general.theme;
+                    if theme == "system" {
+                        if let Some(w) = tray_handle.get_webview_window("flyout") {
+                            apply_backdrop(&w, &theme);
+                        }
+                    }
+                }
                 os_events::OsEvent::Time => time_sched.nudge(),
             });
 
