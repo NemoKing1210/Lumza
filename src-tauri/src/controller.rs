@@ -208,6 +208,8 @@ pub struct Controller {
     wake_retries: AtomicU32,
     rescanning: AtomicBool,
     rescan_again: AtomicBool,
+    /// Set by `rescan`: the next pass must rebuild the workers even if the monitors look unchanged.
+    force_full: AtomicBool,
     /// One display-layout switch at a time.
     switching: Busy,
 }
@@ -311,6 +313,7 @@ impl Controller {
             wake_retries: AtomicU32::new(0),
             rescanning: AtomicBool::new(false),
             rescan_again: AtomicBool::new(false),
+            force_full: AtomicBool::new(false),
             switching: Busy::new(),
         })
     }
@@ -369,8 +372,20 @@ impl Controller {
         self.wake_retries.store(WAKE_RETRIES, Ordering::SeqCst);
     }
 
-    /// Re-enumerate monitors off-thread. Requests arriving mid-scan coalesce into one more pass.
+    /// Re-enumerate monitors off-thread and rebuild every monitor's worker. Requests arriving
+    /// mid-scan coalesce into one more pass.
     pub fn rescan(self: &Arc<Self>) {
+        self.force_full.store(true, Ordering::SeqCst);
+        self.request_scan();
+    }
+
+    /// For OS noise that only might mean a monitor change (any device node change, a USB plug):
+    /// scans, but leaves the running workers and their values alone when the same monitors are found.
+    pub fn rescan_if_changed(self: &Arc<Self>) {
+        self.request_scan();
+    }
+
+    fn request_scan(self: &Arc<Self>) {
         if self.rescanning.swap(true, Ordering::SeqCst) {
             self.rescan_again.store(true, Ordering::SeqCst);
             return;
@@ -410,12 +425,15 @@ impl Controller {
 
     fn do_scan(self: &Arc<Self>) {
         let started = Instant::now();
+        // Taken before the scan: a full request that arrives meanwhile sets it again for the next pass.
+        let soft = !self.force_full.swap(false, Ordering::SeqCst);
         let (scanned, displays) = {
             let ddc = self.settings.get().ddc;
             let mut source = lock(&self.source);
             source.set_timing(ddc.write_delay_ms, ddc.read_delay_ms, ddc.retries);
             (source.scan(), source.display_modes())
         };
+        let failed = scanned.is_err();
         let ports = match scanned {
             Ok(p) => p,
             Err(e) => {
@@ -426,6 +444,15 @@ impl Controller {
         // Even when no monitor answers DDC/CI: a layout that left no display is still a layout.
         self.publish_display_modes(displays);
         let mut st = lock(&self.state);
+        if soft {
+            let old: Vec<_> = st.monitors.iter().map(|m| (m.info.id.as_str(), m.info.device.as_str())).collect();
+            let new: Vec<_> = ports.iter().map(|(i, _)| (i.id.as_str(), i.device.as_str())).collect();
+            // The new ports are dropped here, which releases their handles.
+            if failed || old == new {
+                tracing::debug!("device change without a monitor change; keeping the running workers");
+                return;
+            }
+        }
         st.generation += 1;
         let generation = st.generation;
         st.scan_started = Some(started);

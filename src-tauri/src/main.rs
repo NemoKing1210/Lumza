@@ -600,29 +600,43 @@ fn main() {
             });
 
             // Debounce bursts of OS events (a hot-plug fires several) into one rescan.
-            // The flag says a burst included a wake-up (resume, unlock): monitors may need a few more scans.
-            let (tx, rx) = mpsc::channel::<bool>();
+            // A burst runs as its strongest request: a wake-up (monitors may need a few more scans)
+            // over a display change (full rebuild) over a device-node change (rebuild only if monitors changed).
+            #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+            enum Scan {
+                IfChanged,
+                Full,
+                Wake,
+            }
+            let (tx, rx) = mpsc::channel::<Scan>();
             let c = controller.clone();
             std::thread::spawn(move || {
-                while let Ok(mut wake) = rx.recv() {
-                    while let Ok(w) = rx.recv_timeout(Duration::from_millis(800)) {
-                        wake |= w;
+                while let Ok(mut scan) = rx.recv() {
+                    while let Ok(s) = rx.recv_timeout(Duration::from_millis(800)) {
+                        scan = scan.max(s);
                     }
-                    if wake {
-                        c.expect_slow_wake();
+                    match scan {
+                        Scan::IfChanged => c.rescan_if_changed(),
+                        Scan::Full => c.rescan(),
+                        Scan::Wake => {
+                            c.expect_slow_wake();
+                            c.rescan();
+                        }
                     }
-                    c.rescan();
                 }
             });
             let tray_handle = handle.clone();
             let time_sched = scheduler.clone();
             let tx = Mutex::new(tx);
             os_events::start(move |ev| match ev {
+                os_events::OsEvent::Devices => {
+                    let _ = tx.lock().unwrap().send(Scan::IfChanged);
+                }
                 os_events::OsEvent::Rescan => {
-                    let _ = tx.lock().unwrap().send(false);
+                    let _ = tx.lock().unwrap().send(Scan::Full);
                 }
                 os_events::OsEvent::Wake => {
-                    let _ = tx.lock().unwrap().send(true);
+                    let _ = tx.lock().unwrap().send(Scan::Wake);
                 }
                 os_events::OsEvent::Theme => {
                     tray::update_icon(&tray_handle);

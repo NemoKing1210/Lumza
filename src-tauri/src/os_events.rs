@@ -15,8 +15,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 #[derive(Debug, Clone, Copy)]
 pub enum OsEvent {
-    /// Resolution/topology change, hot-plug, resume, unlock: monitors must be re-enumerated.
+    /// Resolution/topology change: monitors must be re-enumerated.
     Rescan,
+    /// Some device node changed (any USB or Bluetooth plug fires this); monitors only maybe did.
+    Devices,
     /// Resume from sleep or session unlock: like `Rescan`, but monitors may still be waking up.
     Wake,
     /// Light/dark mode or accent colour changed.
@@ -41,7 +43,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
     let ev = match msg {
         WM_DISPLAYCHANGE => Some(OsEvent::Rescan),
         WM_TIMECHANGE => Some(OsEvent::Time),
-        WM_DEVICECHANGE if wp.0 == DBT_DEVNODES_CHANGED => Some(OsEvent::Rescan),
+        WM_DEVICECHANGE if wp.0 == DBT_DEVNODES_CHANGED => Some(OsEvent::Devices),
         WM_POWERBROADCAST if wp.0 == PBT_APMRESUMEAUTOMATIC => Some(OsEvent::Wake),
         WM_WTSSESSION_CHANGE if wp.0 == WTS_SESSION_UNLOCK => Some(OsEvent::Wake),
         WM_SETTINGCHANGE if lp.0 != 0 => {
