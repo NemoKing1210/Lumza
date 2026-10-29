@@ -485,10 +485,13 @@ fn main() {
             app.manage(store.clone());
 
             // Default is "start with Windows" (F-25); keep the registry in line with the setting.
-            // LUMZA_NO_AUTOSTART lets test runs leave the registry alone.
-            if std::env::var_os("LUMZA_NO_AUTOSTART").is_none() {
+            // LUMZA_NO_AUTOSTART lets test runs leave the registry alone; debug builds always do, so
+            // `tauri dev` never registers target\debug\lumza.exe (a console build) for login.
+            if !cfg!(debug_assertions) && std::env::var_os("LUMZA_NO_AUTOSTART").is_none() {
                 let want = store.get().general.autostart;
-                if want != autostart::is_enabled() {
+                // When enabled, also repair a stale path, not just a missing entry.
+                let in_sync = if want { autostart::is_current() } else { !autostart::is_enabled() };
+                if !in_sync {
                     if let Err(e) = autostart::set(want) {
                         tracing::warn!(error = %e, "autostart sync failed");
                     }
