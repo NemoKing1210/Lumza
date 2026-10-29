@@ -512,6 +512,9 @@ pub enum LoadOutcome {
 pub struct SettingsStore {
     path: PathBuf,
     current: Mutex<Settings>,
+    /// Serialises edits from read to disk write. `current` is only held for an instant, so readers
+    /// (sliders, hotkeys, the controller) never wait for an fsync.
+    writer: Mutex<()>,
 }
 
 impl SettingsStore {
@@ -524,7 +527,7 @@ impl SettingsStore {
                 None => (Settings::default(), LoadOutcome::Recovered(quarantine(&path))),
             },
         };
-        let store = Self { path, current: Mutex::new(settings) };
+        let store = Self { path, current: Mutex::new(settings), writer: Mutex::new(()) };
         if outcome != LoadOutcome::Loaded {
             let _ = store.save(&store.get());
         }
@@ -547,14 +550,13 @@ impl SettingsStore {
     /// Apply a JSON merge patch (IPC `update_settings(patch)`), validate, persist.
     /// On error nothing changes.
     pub fn update(&self, patch: &Value) -> Result<Settings> {
-        let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut doc = serde_json::to_value(&*cur).map_err(|e| Error::Invalid(e.to_string()))?;
+        let _edit = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut doc = serde_json::to_value(self.get()).map_err(|e| Error::Invalid(e.to_string()))?;
         merge_patch(&mut doc, patch);
         let mut next: Settings =
             serde_json::from_value(doc).map_err(|e| Error::Invalid(format!("bad settings patch: {e}")))?;
         next.sanitize();
-        self.save(&next).map_err(|e| Error::Os(e.to_string()))?;
-        *cur = next.clone();
+        self.commit(&next)?;
         Ok(next)
     }
 
@@ -565,21 +567,26 @@ impl SettingsStore {
             return Err(Error::Invalid("settings file is too large".into()));
         }
         let next = parse(text).ok_or_else(|| Error::Invalid("not a Lumza settings file".into()))?;
-        // Saved under the lock, like `update`, so a concurrent edit cannot be overwritten on disk
+        // Under the writer lock, like `update`, so a concurrent edit cannot be overwritten on disk
         // by an older document.
-        let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
-        self.save(&next).map_err(|e| Error::Os(e.to_string()))?;
-        *cur = next.clone();
+        let _edit = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        self.commit(&next)?;
         Ok(next)
     }
 
     /// Factory defaults. Unplugged monitors' names and calibration are forgotten too.
     pub fn reset(&self) -> Result<Settings> {
         let next = Settings::default();
-        let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
-        self.save(&next).map_err(|e| Error::Os(e.to_string()))?;
-        *cur = next.clone();
+        let _edit = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        self.commit(&next)?;
         Ok(next)
+    }
+
+    /// Disk first, memory after: a failed write changes nothing. The caller holds `writer`.
+    fn commit(&self, next: &Settings) -> Result<()> {
+        self.save(next).map_err(|e| Error::Os(e.to_string()))?;
+        *self.current.lock().unwrap_or_else(PoisonError::into_inner) = next.clone();
+        Ok(())
     }
 
     /// The current settings as pretty JSON, for export.
@@ -690,6 +697,31 @@ mod tests {
         assert_eq!((m.custom_name.as_deref(), m.hidden, m.order), (Some("Left"), true, 1));
         s.update(&json!({"monitors": {"A": {"customName": null}}})).unwrap();
         assert_eq!(s.get().monitors["A"].custom_name, None);
+    }
+
+    #[test]
+    fn concurrent_edits_all_land_in_memory_and_on_disk() {
+        let dir = tmp("concurrent");
+        let p = dir.join("settings.json");
+        let (s, _) = SettingsStore::load(p.clone());
+        let s = std::sync::Arc::new(s);
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let s = s.clone();
+                std::thread::spawn(move || {
+                    for n in 0..5 {
+                        s.update(&json!({"monitors": {format!("m{i}"): {"order": n}}})).unwrap();
+                        let _ = s.get(); // readers run alongside the writers
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let (on_disk, _) = SettingsStore::load(p);
+        assert_eq!(s.get(), on_disk.get(), "disk and memory disagree");
+        assert!((0..8).all(|i| s.get().monitors[&format!("m{i}")].order == 4));
     }
 
     #[test]
