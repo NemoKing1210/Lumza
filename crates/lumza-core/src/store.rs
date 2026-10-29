@@ -445,10 +445,10 @@ fn migrate(doc: &mut Value) {
             obj.insert("schemaVersion".into(), 1.into());
         }
     }
-    if version < 4 {
-        // v4 only added the schedule block; it is disabled by default.
+    if version < 2 {
+        // v2 only added fields (linked, profiles, calibration); serde defaults fill them in.
         if let Some(obj) = doc.as_object_mut() {
-            obj.insert("schemaVersion".into(), 4.into());
+            obj.insert("schemaVersion".into(), 2.into());
         }
     }
     if version < 3 {
@@ -457,10 +457,10 @@ fn migrate(doc: &mut Value) {
             obj.insert("schemaVersion".into(), 3.into());
         }
     }
-    if version < 2 {
-        // v2 only added fields (linked, profiles, calibration); serde defaults fill them in.
+    if version < 4 {
+        // v4 only added the schedule block; it is disabled by default.
         if let Some(obj) = doc.as_object_mut() {
-            obj.insert("schemaVersion".into(), 2.into());
+            obj.insert("schemaVersion".into(), 4.into());
         }
     }
 }
@@ -754,6 +754,15 @@ mod tests {
         assert_eq!(r.general.tray_icon, "contrast");
         assert!(s.update(&json!({"general": {"autostart": "yes"}})).is_err());
         assert!(s.get().general.autostart, "failed patch must not change anything");
+    }
+
+    #[test]
+    fn migrate_ends_at_the_latest_version() {
+        for v in 0..SCHEMA_VERSION {
+            let mut doc = json!({ "schemaVersion": v });
+            migrate(&mut doc);
+            assert_eq!(doc["schemaVersion"], SCHEMA_VERSION, "from v{v}");
+        }
     }
 
     #[test]

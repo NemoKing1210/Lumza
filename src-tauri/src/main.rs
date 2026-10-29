@@ -161,7 +161,7 @@ async fn export_settings(s: State<'_, Arc<SettingsStore>>) -> Result<bool, Strin
     .await
     .map_err(|e| e.to_string())?;
     match picked {
-        Some(path) => std::fs::write(path, text).map(|_| true).map_err(|e| e.to_string()),
+        Some(path) => lumza_core::store::write_atomic(&path, text.as_bytes()).map(|_| true).map_err(|e| e.to_string()),
         None => Ok(false),
     }
 }
@@ -214,8 +214,11 @@ fn set_linked_value(app: AppHandle, c: State<Arc<Controller>>, feature: String, 
 
 #[tauri::command]
 fn apply_profile(app: AppHandle, c: State<Arc<Controller>>, id: String) -> bool {
-    scheduler::manual(&app);
-    c.apply_profile(&id)
+    let applied = c.apply_profile(&id);
+    if applied {
+        scheduler::manual(&app);
+    }
+    applied
 }
 
 #[tauri::command]
