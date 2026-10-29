@@ -194,7 +194,7 @@ const WAKE_RETRIES: u32 = 2;
 
 /// Spends one retry from `budget`; false when none is left.
 fn take_retry(budget: &AtomicU32) -> bool {
-    budget.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
+    budget.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
 }
 
 pub struct Controller {
