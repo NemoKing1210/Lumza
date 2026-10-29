@@ -134,7 +134,7 @@ jobs:
       # A manual run publishes nothing; keep the results where they can be downloaded and tried.
       - name: Keep the dry-run results as artifacts
         if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lumza-${{ matrix.target }}
           path: |
