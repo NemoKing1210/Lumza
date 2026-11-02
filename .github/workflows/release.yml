@@ -24,7 +24,7 @@ jobs:
     outputs:
       notes: ${{ steps.notes.outputs.body }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Tag matches the version files
         if: github.ref_type == 'tag'
@@ -79,7 +79,7 @@ jobs:
             args: "--target aarch64-pc-windows-msvc"
             out: target/aarch64-pc-windows-msvc/release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
