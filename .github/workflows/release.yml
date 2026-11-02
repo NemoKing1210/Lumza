@@ -95,7 +95,7 @@ jobs:
       - run: npm --prefix ui ci
 
       - name: Build, sign and publish the installer
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Private key made with `tauri signer generate`; the public key is in tauri.conf.json.
