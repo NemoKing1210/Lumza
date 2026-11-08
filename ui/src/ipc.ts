@@ -12,7 +12,7 @@ export interface MonitorDto {
   id: string; number: number; name: string; originalName: string;
   color: string | null; icon: string | null;
   features: FeatureDto[]; probed: boolean; stale: boolean; hidden: boolean; hiddenFeatures: string[];
-  excludedFromLink: boolean; calibration: CalibrationDto[];
+  excludedFromLink: boolean; primary: boolean; refreshHz: number | null; calibration: CalibrationDto[];
   /** Present only when the monitor supports HDR. */
   hdr: HdrDto | null;
 }
@@ -69,6 +69,7 @@ export interface Settings {
   general: {
     autostart: boolean; language: string; theme: "system" | "light" | "dark"; step: number;
     showValues: "hover" | "always"; checkUpdates: boolean; trayIcon: TrayIconName;
+    showPrimary: boolean; showRefreshRate: boolean;
   };
   linked: { enabled: boolean; features: FeatureName[]; showIndividual: boolean };
   profiles: Profile[];
@@ -159,6 +160,26 @@ export { listen };
 export function sameMode(current: DisplayModeDto | null, b: DisplayModeDto): boolean {
   if (!current || current.type !== b.type) return false;
   return current.type !== "only" || current.key === (b as { key: string }).key;
+}
+
+/** A profile is in effect when it sets at least one value and every value it sets for a connected,
+ * answering monitor is what that monitor shows now. Values for unplugged monitors are ignored. */
+export function profileIsActive(p: Profile, monitors: MonitorDto[]): boolean {
+  let checked = 0;
+  for (const mid of Object.keys(p.values)) {
+    const m = monitors.find((x) => x.id === mid && !x.stale);
+    const values = p.values[mid];
+    if (!m || !values) continue;
+    for (const f of Object.keys(values) as FeatureName[]) {
+      const value = values[f];
+      if (value === undefined) continue;
+      const current = m.features.find((x) => x.feature === f);
+      if (!current) continue;
+      if (current.percent !== value) return false;
+      checked++;
+    }
+  }
+  return checked > 0;
 }
 
 /** Mirror of `lumza_core::scale::uncalibrate`: monitor percent -> common percent. */

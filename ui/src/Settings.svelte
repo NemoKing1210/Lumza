@@ -415,6 +415,14 @@
             <option value="always">{t("set.always")}</option>
           </select>
         </label>
+        <label class="line">
+          <span><b>{t("set.showPrimary")}</b><small>{t("set.showPrimaryHint")}</small></span>
+          <input type="checkbox" class="switch" role="switch" checked={g.showPrimary} onchange={(e) => setGeneral({ showPrimary: e.currentTarget.checked })} />
+        </label>
+        <label class="line">
+          <span><b>{t("set.showRefreshRate")}</b><small>{t("set.showRefreshRateHint")}</small></span>
+          <input type="checkbox" class="switch" role="switch" checked={g.showRefreshRate} onchange={(e) => setGeneral({ showRefreshRate: e.currentTarget.checked })} />
+        </label>
       </div>
     {:else if section === "monitors"}
       <h2>{t("set.nav.monitors")}</h2>

@@ -16,9 +16,10 @@ use lumza_core::scale::percent_to_raw;
 use lumza_core::store::{Cache, CachedFeature, CachedMonitor, Profile, Range, Settings, SettingsStore};
 use lumza_core::{DisplayMode, DisplayModes, Feature, HdrState, MonitorInfo, MonitorPort, PortSource, VcpValue};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::display_modes::{Busy, DisplayModesDto};
+use crate::flyout::Flyout;
 
 type Probe = Vec<(Feature, Option<VcpValue>)>;
 
@@ -242,6 +243,10 @@ pub struct MonitorDto {
     hidden: bool,
     hidden_features: Vec<String>,
     excluded_from_link: bool,
+    /// Windows uses this display as the main one.
+    primary: bool,
+    /// Refresh rate Windows drives it at, in Hz; `None` when unknown.
+    refresh_hz: Option<u32>,
     /// Calibration ranges for linked sliders, only for features the user changed.
     calibration: Vec<CalibrationDto>,
     /// Present only when the monitor supports HDR.
@@ -450,8 +455,24 @@ impl Controller {
         if soft {
             let old: Vec<_> = st.monitors.iter().map(|m| (m.info.id.as_str(), m.info.device.as_str())).collect();
             let new: Vec<_> = ports.iter().map(|(i, _)| (i.id.as_str(), i.device.as_str())).collect();
-            // The new ports are dropped here, which releases their handles.
             if failed || old == new {
+                // The new ports are dropped here, which releases their handles. Windows can still
+                // have changed which display is the main one, or its refresh rate, without a
+                // monitor appearing or disappearing.
+                let mut changed = false;
+                for (info, _) in &ports {
+                    if let Some(m) = st.monitors.iter_mut().find(|m| m.info.id == info.id) {
+                        changed |= m.info.primary != info.primary || m.info.refresh_hz != info.refresh_hz;
+                        m.info.primary = info.primary;
+                        m.info.refresh_hz = info.refresh_hz;
+                    }
+                }
+                drop(ports);
+                if changed {
+                    let snap = self.settings.read(|s| snapshot_of(&st, s));
+                    drop(st);
+                    let _ = self.app.emit("monitors-changed", snap);
+                }
                 tracing::debug!("device change without a monitor change; keeping the running workers");
                 return;
             }
@@ -661,7 +682,14 @@ impl Controller {
                 let Some(_busy) = this.switching.try_acquire() else { return };
                 let res = lock(&this.source).set_display_mode(&mode);
                 match res {
-                    Ok(()) => this.rescan(),
+                    Ok(()) => {
+                        // The displays are rearranging under the open flyout: close it instead of
+                        // letting it jump to another monitor. On failure it stays, showing the toast.
+                        if let (Some(f), Some(win)) = (this.app.try_state::<Flyout>(), Flyout::window(&this.app)) {
+                            f.hide(&win);
+                        }
+                        this.rescan();
+                    }
                     Err(e) => {
                         tracing::warn!(error = %e, "display mode change failed");
                         let _ = this.app.emit("display-mode-failed", ());
@@ -950,7 +978,14 @@ fn queue_write(st: &mut State, id: &str, feature: Feature, percent: u8) -> Optio
 }
 
 fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
-    let dto = |id: &str, number: u32, name: &str, features: Vec<FeatureDto>, probed: bool, stale: bool| {
+    let dto = |id: &str,
+               number: u32,
+               name: &str,
+               features: Vec<FeatureDto>,
+               probed: bool,
+               stale: bool,
+               primary: bool,
+               refresh_hz: Option<u32>| {
         let ms = settings.monitors.get(id);
         MonitorDto {
             id: id.to_string(),
@@ -968,6 +1003,8 @@ fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
             hidden: ms.is_some_and(|m| m.hidden),
             hidden_features: ms.map(|m| m.hidden_features.clone()).unwrap_or_default(),
             excluded_from_link: ms.is_some_and(|m| m.excluded_from_link),
+            primary,
+            refresh_hz,
             calibration: ms
                 .map(|m| {
                     m.calibration
@@ -990,7 +1027,7 @@ fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
                         Some(FeatureDto { feature: f.feature.parse::<Feature>().ok()?.name(), percent: f.percent })
                     })
                     .collect();
-                dto(&c.id, c.number, &c.name, f, false, true)
+                dto(&c.id, c.number, &c.name, f, false, true, false, None)
             })
             .collect()
     } else {
@@ -999,7 +1036,16 @@ fn snapshot_of(st: &State, settings: &Settings) -> Snapshot {
             .map(|m| {
                 let f =
                     m.features.iter().map(|f| FeatureDto { feature: f.feature.name(), percent: f.percent }).collect();
-                dto(&m.info.id, m.info.number, &m.info.name, f, m.probed, !m.probed && !m.features.is_empty())
+                dto(
+                    &m.info.id,
+                    m.info.number,
+                    &m.info.name,
+                    f,
+                    m.probed,
+                    !m.probed && !m.features.is_empty(),
+                    m.info.primary,
+                    m.info.refresh_hz,
+                )
             })
             .collect()
     };

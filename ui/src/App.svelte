@@ -2,8 +2,8 @@
   import { onMount, tick } from "svelte";
   import {
     applyProfile, resaveProfile, fitFlyout, getMonitors, hideFlyout, isSolid, listen, openSettings, PROFILE_ICONS, MONITOR_ICONS, badgeStyle,
-    getDisplayModes, getScheduleState, refreshMonitors, reloadValues, resumeSchedule, sameMode, saveCurrentAsProfile,
-    setDisplayMode, setHdr, setLinkedValue, setValue, takeNotice, uncalibrate, updateSettings,
+    getDisplayModes, getScheduleState, profileIsActive, refreshMonitors, reloadValues, resumeSchedule, sameMode,
+    saveCurrentAsProfile, setDisplayMode, setHdr, setLinkedValue, setValue, takeNotice, uncalibrate, updateSettings,
     type DisplayModeDto, type DisplayModesDto, type FeatureName, type FeatureDto, type MonitorDto, type ScheduleState,
     type ValueChanged,
   } from "./ipc";
@@ -26,10 +26,8 @@
   let newName = $state("");
   let newIcon = $state("sun");
   let adding = $state(false);
-  let appliedId = $state<string | null>(null);
   /** Profile under the pointer: its values are previewed on the sliders. */
   let previewId = $state<string | null>(null);
-  let appliedTimer: ReturnType<typeof setTimeout> | undefined;
   /** Connected displays and the Windows layout; null until known or when Windows cannot say. */
   let modes = $state<DisplayModesDto | null>(null);
   let showModes = $state(false);
@@ -38,6 +36,8 @@
 
   const visible = $derived(monitors.filter((m) => !m.hidden));
   const step = $derived(app.settings?.general.step ?? 2);
+  const showPrimary = $derived(app.settings?.general.showPrimary ?? true);
+  const showRefreshRate = $derived(app.settings?.general.showRefreshRate ?? true);
   const profiles = $derived(app.settings?.profiles ?? []);
   const canSwitchModes = $derived((modes?.displays.length ?? 0) >= 2);
   const modeItems = $derived<{ id: string; mode: DisplayModeDto; label: string; sub?: string }[]>([
@@ -144,12 +144,9 @@
   }
 
   function pickProfile(id: string) {
+    // The tile marks itself as active once the monitors report the profile's values; the drawer stays open.
     applyProfile(id);
-    // Confirm the pick on the tile, then fold the drawer away.
-    appliedId = id;
     previewId = null;
-    clearTimeout(appliedTimer);
-    appliedTimer = setTimeout(() => { appliedId = null; showProfiles = false; adding = false; }, 650);
   }
 
   /** Overwrites a profile with what the sliders show now; the drawer stays open so it can be repeated. */
@@ -189,7 +186,7 @@
       listen<DisplayModesDto | null>("display-modes-changed", (e) => (modes = e.payload)),
       listen("display-mode-failed", () => showToast(t("app.displayModeFailed"))),
       listen("flyout-shown", () => { shown = false; alt = !alt; lastFit = 0; setTimeout(() => (shown = true), 30); reloadValues(); }),
-      listen("flyout-hidden", () => { shown = false; showProfiles = false; showModes = false; adding = false; appliedId = null; previewId = null; }),
+      listen("flyout-hidden", () => { shown = false; showProfiles = false; showModes = false; adding = false; previewId = null; }),
     ]);
     return () => { ro.disconnect(); un.then((fns) => fns.forEach((f) => f())); };
   });
@@ -237,6 +234,12 @@
               <span class="badge" class:icon={MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{MONITOR_ICONS[m.icon] ?? m.number}</span>
             {/if}
             <span class="name">{m.name}</span>
+            {#if showPrimary && m.primary}
+              <span class="tag">{t("app.primary")}</span>
+            {/if}
+            {#if showRefreshRate && m.refreshHz != null}
+              <span class="hz">{t("app.hz", { hz: m.refreshHz })}</span>
+            {/if}
           </header>
           {#if !m.probed && m.features.length === 0}
             <div class="bar"></div><div class="bar"></div>
@@ -297,11 +300,13 @@
       <section class="card pcard" aria-label={t("app.profiles")}>
         <div class="ptiles">
           {#each profiles as p (p.id)}
+            {@const active = profileIsActive(p, monitors)}
             <div class="pwrap">
-              <button class="ptile" class:done={appliedId === p.id} onclick={() => pickProfile(p.id)}
+              <button class="ptile" class:active={active} aria-current={active ? "true" : undefined}
+                onclick={() => pickProfile(p.id)}
                 onpointerenter={() => (previewId = p.id)} onpointerleave={() => (previewId = null)}
                 onfocus={() => (previewId = p.id)} onblur={() => (previewId = null)}>
-                <span class="pic" aria-hidden="true">{appliedId === p.id ? "" : (PROFILE_ICONS[p.icon] ?? PROFILE_ICONS.sun)}</span>
+                <span class="pic" aria-hidden="true">{PROFILE_ICONS[p.icon] ?? PROFILE_ICONS.sun}</span>
                 <span class="pname">{p.name}</span>
               </button>
               <button class="icon presave" title={t("app.profileResave")} aria-label="{t('app.profileResave')}: {p.name}"

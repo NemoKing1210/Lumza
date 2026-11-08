@@ -293,9 +293,6 @@ nav h1 { display: none; }
   font: 16px "Segoe Fluent Icons", "Segoe MDL2 Assets"; transition: background-color 0.18s ease, color 0.18s ease, transform 0.25s var(--ease-move); }
 .ptile:hover .pic { background: var(--accent); color: var(--on-accent); transform: scale(1.08); }
 .ptile .pname { max-width: 100%; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ptile.done, .ptile.done:hover { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
-.ptile.done .pic { background: var(--accent); color: var(--on-accent); animation: pop 0.35s var(--ease-out); }
-@keyframes pop { from { transform: scale(0.6); } to { transform: scale(1); } }
 .ptile.add { border-style: dashed; color: var(--fg2); }
 .ptile.add.on { border-style: solid; border-color: var(--accent); color: var(--fg); }
 .ptile.add .pic { background: transparent; border: 1px dashed var(--fg2); }
@@ -338,7 +335,12 @@ button.primary:hover:not(:disabled) { background: var(--accent); filter: brightn
 main > .card, .lcard { gap: 4px; padding: 12px 16px 8px; border-radius: 8px; background: var(--card-fill); border: 1px solid var(--stroke-card); box-shadow: none; }
 main > .card:hover, .lcard:hover { box-shadow: none; border-color: var(--stroke-card); }
 main > .card > header, .lcard > header { gap: 10px; padding: 0 0 6px; border-bottom: 0; }
-main > .card .name, .lcard .name { font-size: 14px; font-weight: 600; letter-spacing: 0; }
+main > .card .name, .lcard .name { min-width: 0; font-size: 14px; font-weight: 600; letter-spacing: 0; }
+/* "Main" marker for the primary display and its refresh rate, right-aligned in the header. */
+main > .card .tag { flex: none; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 16px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); white-space: nowrap; }
+main > .card .hz { flex: none; margin-left: auto; font-size: 12px; color: var(--fg2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (forced-colors: active) { main > .card .tag { color: CanvasText; border: 1px solid CanvasText; background: none; } }
 .badge { --b: var(--accent); min-width: 22px; height: 22px; border-radius: 4px; box-shadow: none; font-size: 12px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--b) 78%, #fff), color-mix(in srgb, var(--b) 85%, #000)); }
 .badge.link { border-radius: 4px; }
@@ -384,9 +386,9 @@ footer button.icon.on, footer button.icon.on:hover { background: var(--accent); 
 .ptile:active:not(.add) { background: var(--press-fill); transform: none; }
 .ptile .pic, .ptile:hover .pic { width: 24px; height: 24px; border-radius: 0; background: none; border: 0; color: var(--fg); font-size: 18px; transform: none; }
 .ptile .pname { font-size: 12px; font-weight: 400; color: var(--fg); }
-.ptile.done, .ptile.done:hover { background: var(--hover-fill); box-shadow: none; border: 0; }
-.ptile.done::before { content: ""; position: absolute; left: 50%; bottom: 1px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--accent); animation: indicator-in 0.32s var(--ease-move) both; }
-.ptile.done .pic { background: none; color: var(--accent); animation: pop 0.35s var(--ease-out); }
+/* The profile whose values are in force: an accent indicator under the tile. */
+.ptile.active::before { content: ""; position: absolute; left: 50%; bottom: 1px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--accent); }
+@media (forced-colors: active) { .ptile.active::before { background: Highlight; } }
 /* Row-wide "save current" item, separated from the tiles by a hairline. */
 .ptile.add, .ptile.add:hover, .ptile.add.on { grid-column: 1 / -1; flex-direction: row; justify-content: flex-start; gap: 12px; margin-top: 4px; padding: 8px 12px; border: 0; border-top: 1px solid var(--stroke); border-radius: 0 0 4px 4px; background: transparent; color: var(--fg); }
 .ptile.add:hover, .ptile.add.on { background: var(--hover-fill); }

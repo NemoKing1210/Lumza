@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
-use windows::core::BOOL;
+use windows::core::{BOOL, PCWSTR};
 use windows::Win32::Devices::Display::{
     CapabilitiesRequestAndCapabilitiesReply, DestroyPhysicalMonitors, DisplayConfigGetDeviceInfo,
     GetCapabilitiesStringLength, GetDisplayConfigBufferSizes, GetNumberOfPhysicalMonitorsFromHMONITOR,
@@ -16,7 +16,11 @@ use windows::Win32::Devices::Display::{
     QUERY_DISPLAY_CONFIG_FLAGS,
 };
 use windows::Win32::Foundation::{HANDLE, LPARAM, RECT};
-use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW};
+use windows::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, EnumDisplaySettingsW, GetMonitorInfoW, DEVMODEW, ENUM_CURRENT_SETTINGS, HDC, HMONITOR,
+    MONITORINFOEXW,
+};
+use windows::Win32::UI::WindowsAndMessaging::MONITORINFOF_PRIMARY;
 
 use crate::backend::{DisplayBackend, MonitorPort, PortSource};
 use crate::error::{Error, Result};
@@ -263,6 +267,7 @@ fn read_edid(pnp: &str, instance: &str) -> Option<Vec<u8>> {
 struct Hmon {
     hmonitor: HMONITOR,
     device: String,
+    primary: bool,
 }
 
 unsafe extern "system" fn enum_proc(h: HMONITOR, _: HDC, _: *mut RECT, lp: LPARAM) -> BOOL {
@@ -270,13 +275,26 @@ unsafe extern "system" fn enum_proc(h: HMONITOR, _: HDC, _: *mut RECT, lp: LPARA
     let mut mi = MONITORINFOEXW::default();
     mi.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
     if GetMonitorInfoW(h, &mut mi as *mut _ as *mut _).as_bool() {
-        out.push(Hmon { hmonitor: h, device: wide_to_string(&mi.szDevice) });
+        out.push(Hmon {
+            hmonitor: h,
+            device: wide_to_string(&mi.szDevice),
+            primary: mi.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0,
+        });
     }
     BOOL(1)
 }
 
 pub(crate) fn gdi_number(device: &str) -> u32 {
     device.trim_start_matches(r"\\.\DISPLAY").parse().unwrap_or(0)
+}
+
+/// The refresh rate Windows currently drives `device` at; `None` when it cannot be asked.
+fn refresh_hz(device: &str) -> Option<u32> {
+    let name: Vec<u16> = device.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut mode = DEVMODEW { dmSize: size_of::<DEVMODEW>() as u16, ..Default::default() };
+    let ok = unsafe { EnumDisplaySettingsW(PCWSTR(name.as_ptr()), ENUM_CURRENT_SETTINGS, &mut mode) };
+    // 0 and 1 are the "hardware default" and "no rate" placeholders, not a real rate.
+    ok.as_bool().then_some(mode.dmDisplayFrequency).filter(|hz| *hz > 1)
 }
 
 fn scan_raw(timing: Timing) -> Result<Vec<(MonitorInfo, Dxva2Port)>> {
@@ -335,6 +353,8 @@ fn scan_raw(timing: Timing) -> Result<Vec<(MonitorInfo, Dxva2Port)>> {
                     name,
                     connection: Connection::Ddc,
                     device: hm.device.clone(),
+                    primary: hm.primary,
+                    refresh_hz: refresh_hz(&hm.device),
                 },
                 Dxva2Port { guard: Arc::new(Guard(pm.hPhysicalMonitor)), timing },
             ));

@@ -34,6 +34,10 @@ pub struct General {
     pub check_updates: bool,
     /// One of `TRAY_ICONS`.
     pub tray_icon: String,
+    /// Mark the display Windows uses as the main one in the flyout.
+    pub show_primary: bool,
+    /// Show each display's refresh rate in the flyout.
+    pub show_refresh_rate: bool,
 }
 
 /// Tray icon styles; the order is the order of the picker.
@@ -49,6 +53,8 @@ impl Default for General {
             show_values: "always".into(),
             check_updates: true,
             tray_icon: TRAY_ICONS[0].into(),
+            show_primary: true,
+            show_refresh_rate: true,
         }
     }
 }

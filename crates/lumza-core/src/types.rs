@@ -118,4 +118,8 @@ pub struct MonitorInfo {
     pub connection: Connection,
     /// GDI device name (e.g. `\\.\DISPLAY1`) for diagnostics.
     pub device: String,
+    /// The display Windows uses as the main one (the desktop's origin sits on it).
+    pub primary: bool,
+    /// Refresh rate Windows currently drives it at, in Hz, when it can be read.
+    pub refresh_hz: Option<u32>,
 }

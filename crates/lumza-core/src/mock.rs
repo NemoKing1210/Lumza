@@ -59,6 +59,8 @@ impl MockBackend {
                 name: name.into(),
                 connection: Connection::Ddc,
                 device: format!(r"\\.\DISPLAY{n}"),
+                primary: n == 1,
+                refresh_hz: Some(if n == 1 { 144 } else { 60 }),
             },
             caps: caps.into(),
             max: 100,
