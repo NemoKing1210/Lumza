@@ -78,6 +78,7 @@ export interface Settings {
   schedule: Schedule;
   ddc: { writeDelayMs: number; readDelayMs: number; retries: number };
   templatesSeeded: boolean;
+  templatesContrast: boolean;
   monitors: Record<string, MonitorSettings>;
 }
 export interface About { version: string; settingsPath: string; logPath: string; repoUrl: string; autostartRegistered: boolean }

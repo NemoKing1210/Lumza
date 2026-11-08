@@ -844,34 +844,85 @@ impl Controller {
     }
 
     /// First run: create the built-in Day / Night / Games profiles from the monitors found.
+    /// Templates made before they captured contrast get it once, from the monitors' current values.
     fn seed_templates(&self) {
         let settings = self.settings.get();
-        if settings.templates_seeded {
-            return;
-        }
-        let have_brightness: Vec<String> =
-            self.current_values().into_iter().filter(|(_, f)| f.contains_key("brightness")).map(|(id, _)| id).collect();
-        if have_brightness.is_empty() {
+        let current = self.current_values();
+        if current.is_empty() {
             return; // nothing to build them from yet; try again after the next scan
         }
-        let mk = |id: &str, name: &str, icon: &str, brightness: u8| Profile {
-            id: id.into(),
-            name: name.into(),
-            icon: icon.into(),
-            values: have_brightness
-                .iter()
-                .map(|m| (m.clone(), BTreeMap::from([("brightness".to_string(), brightness)])))
-                .collect(),
-        };
+        if !settings.templates_seeded {
+            if !current.values().any(|f| f.contains_key("brightness")) {
+                return;
+            }
+            let mk = |id: &str, name: &str, icon: &str, brightness: u8| Profile {
+                id: id.into(),
+                name: name.into(),
+                icon: icon.into(),
+                values: template_values(&current, brightness),
+            };
+            let mut profiles = settings.profiles;
+            profiles.push(mk("tpl-day", "Day", "sun", 80));
+            profiles.push(mk("tpl-night", "Night", "moon", 25));
+            profiles.push(mk("tpl-games", "Games", "game", 100));
+            let patch = serde_json::json!({
+                "profiles": profiles,
+                "templatesSeeded": true,
+                "templatesContrast": true
+            });
+            match self.settings.update(&patch) {
+                Ok(new) => {
+                    let _ = self.app.emit("settings-changed", &new);
+                }
+                Err(e) => tracing::warn!(error = %e, "seeding profile templates failed"),
+            }
+            return;
+        }
+        if settings.templates_contrast {
+            return;
+        }
+        // Templates used to hold brightness only: switch a profile changed nothing but brightness.
         let mut profiles = settings.profiles;
-        profiles.push(mk("tpl-day", "Day", "sun", 80));
-        profiles.push(mk("tpl-night", "Night", "moon", 25));
-        profiles.push(mk("tpl-games", "Games", "game", 100));
-        match self.settings.update(&serde_json::json!({ "profiles": profiles, "templatesSeeded": true })) {
+        backfill_template_contrast(&mut profiles, &current);
+        match self.settings.update(&serde_json::json!({ "profiles": profiles, "templatesContrast": true })) {
             Ok(new) => {
                 let _ = self.app.emit("settings-changed", &new);
             }
-            Err(e) => tracing::warn!(error = %e, "seeding profile templates failed"),
+            Err(e) => tracing::warn!(error = %e, "adding contrast to profile templates failed"),
+        }
+    }
+}
+
+/// Values for a built-in template: every monitor with brightness gets the template's brightness and
+/// the contrast it has now, so applying a profile restores both. Volume is left alone.
+fn template_values(
+    current: &BTreeMap<String, BTreeMap<String, u8>>,
+    brightness: u8,
+) -> BTreeMap<String, BTreeMap<String, u8>> {
+    current
+        .iter()
+        .filter(|(_, f)| f.contains_key("brightness"))
+        .map(|(id, feats)| {
+            let mut values = BTreeMap::from([("brightness".to_string(), brightness)]);
+            if let Some(contrast) = feats.get("contrast") {
+                values.insert("contrast".to_string(), *contrast);
+            }
+            (id.clone(), values)
+        })
+        .collect()
+}
+
+/// Give the built-in profiles the contrast they were created without, where they cover the monitor
+/// and have no contrast of their own. Custom profiles and values the user set are left untouched.
+fn backfill_template_contrast(profiles: &mut [Profile], current: &BTreeMap<String, BTreeMap<String, u8>>) {
+    for p in profiles.iter_mut().filter(|p| matches!(p.id.as_str(), "tpl-day" | "tpl-night" | "tpl-games")) {
+        for (id, feats) in &mut p.values {
+            if feats.contains_key("contrast") {
+                continue;
+            }
+            if let Some(contrast) = current.get(id).and_then(|f| f.get("contrast")) {
+                feats.insert("contrast".to_string(), *contrast);
+            }
         }
     }
 }
@@ -1110,5 +1161,40 @@ mod tests {
         let mut map = hdr_of(&[("a", OFF)]);
         assert!(merge_hdr(&mut map, vec![("a".into(), Some(ON))]));
         assert_eq!(map["a"], ON);
+    }
+
+    fn values_map(pairs: &[(&str, &[(&str, u8)])]) -> BTreeMap<String, BTreeMap<String, u8>> {
+        pairs.iter().map(|(m, fs)| (m.to_string(), fs.iter().map(|(f, v)| (f.to_string(), *v)).collect())).collect()
+    }
+
+    #[test]
+    fn templates_set_brightness_and_keep_contrast() {
+        let current = values_map(&[
+            ("a", &[("brightness", 70), ("contrast", 40), ("volume", 5)]),
+            ("b", &[("contrast", 30)]), // no brightness: no picture settings to template
+        ]);
+        let v = template_values(&current, 80);
+        assert_eq!(v["a"]["brightness"], 80);
+        assert_eq!(v["a"]["contrast"], 40, "contrast is remembered like brightness");
+        assert!(!v["a"].contains_key("volume"), "a template must not reset the volume");
+        assert!(!v.contains_key("b"));
+    }
+
+    #[test]
+    fn backfill_adds_contrast_to_templates_only_when_missing() {
+        let current = values_map(&[("a", &[("brightness", 70), ("contrast", 40)])]);
+        let mut profiles = vec![
+            Profile { id: "tpl-day".into(), values: values_map(&[("a", &[("brightness", 80)])]), ..Profile::default() },
+            Profile { id: "mine".into(), values: values_map(&[("a", &[("brightness", 80)])]), ..Profile::default() },
+            Profile {
+                id: "tpl-games".into(),
+                values: values_map(&[("a", &[("brightness", 100), ("contrast", 55)])]),
+                ..Profile::default()
+            },
+        ];
+        backfill_template_contrast(&mut profiles, &current);
+        assert_eq!(profiles[0].values["a"]["contrast"], 40);
+        assert!(!profiles[1].values["a"].contains_key("contrast"), "custom profiles are not touched");
+        assert_eq!(profiles[2].values["a"]["contrast"], 55, "a contrast the user set stays");
     }
 }

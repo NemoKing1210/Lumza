@@ -308,6 +308,8 @@ pub struct Settings {
     pub ddc: Ddc,
     /// The built-in "Day / Night / Games" profiles were created once; deleting them sticks.
     pub templates_seeded: bool,
+    /// The built-in profiles were given contrast once (older ones held brightness only).
+    pub templates_contrast: bool,
     /// Kept for monitors that are currently unplugged, so they are restored on reconnect.
     pub monitors: BTreeMap<String, MonitorSettings>,
 }
@@ -325,6 +327,7 @@ impl Default for Settings {
             schedule: Schedule::default(),
             ddc: Ddc::default(),
             templates_seeded: false,
+            templates_contrast: false,
             monitors: BTreeMap::new(),
         }
     }
