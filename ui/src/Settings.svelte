@@ -351,7 +351,7 @@
 {/snippet}
 
 <div class="window">
-<TitleBar />
+<TitleBar version={about?.version ?? ""} />
 <div class="shell">
   <nav aria-label={t("set.navAria")}>
     {#each NAV as n (n.id)}

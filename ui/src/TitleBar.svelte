@@ -4,6 +4,8 @@
   import Mark from "./Mark.svelte";
   import { t } from "./i18n.svelte";
 
+  let { version = "" }: { version?: string } = $props();
+
   const win = getCurrentWindow();
   let maximized = $state(false);
 
@@ -19,6 +21,7 @@
   <div class="tb-brand">
     <Mark />
     <span class="tb-name">Lumza</span>
+    {#if version}<span class="tb-ver">v{version}</span>{/if}
   </div>
   <div class="tb-controls">
     <button class="tb-btn" tabindex="-1" aria-label={t("win.minimize")} title={t("win.minimize")} onclick={() => win.minimize()}>
