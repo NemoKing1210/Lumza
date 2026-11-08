@@ -69,7 +69,8 @@ export interface Settings {
   general: {
     autostart: boolean; language: string; theme: "system" | "light" | "dark"; step: number;
     showValues: "hover" | "always"; checkUpdates: boolean; trayIcon: TrayIconName;
-    showPrimary: boolean; showRefreshRate: boolean;
+    showPrimary: boolean; showRefreshRate: boolean; showProfiles: boolean; showModes: boolean;
+    hideProfilesButton: boolean; hideLinkedButton: boolean; hideModesButton: boolean;
   };
   linked: { enabled: boolean; features: FeatureName[]; showIndividual: boolean };
   profiles: Profile[];

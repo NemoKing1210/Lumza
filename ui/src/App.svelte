@@ -13,8 +13,6 @@
 
   let monitors = $state<MonitorDto[]>([]);
   let scanning = $state(true);
-  let shown = $state(false);
-  let alt = $state(false); // alternates so the entrance animation restarts on every show
   let solid = $state(false);
   let hdrEpoch = $state(0);
   let toast = $state("");
@@ -40,6 +38,13 @@
   const showRefreshRate = $derived(app.settings?.general.showRefreshRate ?? true);
   const profiles = $derived(app.settings?.profiles ?? []);
   const canSwitchModes = $derived((modes?.displays.length ?? 0) >= 2);
+  const profilesPinned = $derived(app.settings?.general.showProfiles ?? false);
+  const modesPinned = $derived(app.settings?.general.showModes ?? false);
+  const hideProfilesButton = $derived(app.settings?.general.hideProfilesButton ?? false);
+  const hideLinkedButton = $derived(app.settings?.general.hideLinkedButton ?? false);
+  const hideModesButton = $derived(app.settings?.general.hideModesButton ?? false);
+  const profilesOpen = $derived(profilesPinned || showProfiles);
+  const modesOpen = $derived(canSwitchModes && (modesPinned || showModes));
   const modeItems = $derived<{ id: string; mode: DisplayModeDto; label: string; sub?: string }[]>([
     { id: "duplicate", mode: { type: "duplicate" }, label: t("app.display.duplicate") },
     { id: "extend", mode: { type: "extend" }, label: t("app.display.extend") },
@@ -70,13 +75,12 @@
     if (linkedOpen) { showProfiles = false; showModes = false; adding = false; }
   });
 
-  /** Opens a drawer for the profile/display buttons; the "all monitors" drawer is a setting, so it is switched off. */
+  /** Opens a drawer for the profile/display buttons; a linked block the user pinned with "Always" is left alone. */
   function openDrawer(which: "profiles" | "modes") {
     const open = which === "profiles" ? !showProfiles : !showModes;
     showProfiles = which === "profiles" && open;
     showModes = which === "modes" && open;
     adding = false;
-    if (open && linkedOpen) updateSettings({ linked: { enabled: false } });
   }
 
   const previewProfile = $derived(profiles.find((p) => p.id === previewId));
@@ -122,15 +126,16 @@
   async function fit(..._deps: unknown[]) {
     await tick();
     if (!root) return;
-    const h = Math.ceil(root.getBoundingClientRect().height);
-    // The effect and the ResizeObserver both fire for one layout change, and the entrance animation
-    // fires the observer on many frames: only a different height is worth a window resize.
+    // Floor: a window even a fraction taller than the content shows a 1px untinted strip at its bottom.
+    const h = Math.floor(root.getBoundingClientRect().height);
+    // The effect and the ResizeObserver both fire for one layout change: only a different height is
+    // worth a window resize.
     if (h === lastFit) return;
     lastFit = h;
     fitFlyout(h);
   }
 
-  $effect(() => { fit(visible, scanning, toast, showProfiles, showModes, modes, linkedFeatures, profiles, sched); });
+  $effect(() => { fit(visible, scanning, toast, showProfiles, showModes, profilesPinned, modesPinned, modes, linkedFeatures, profiles, sched); });
 
   async function saveProfile() {
     const name = newName.trim();
@@ -185,8 +190,8 @@
       listen("hdr-failed", () => showToast(t("app.hdrFailed"))),
       listen<DisplayModesDto | null>("display-modes-changed", (e) => (modes = e.payload)),
       listen("display-mode-failed", () => showToast(t("app.displayModeFailed"))),
-      listen("flyout-shown", () => { shown = false; alt = !alt; lastFit = 0; setTimeout(() => (shown = true), 30); reloadValues(); }),
-      listen("flyout-hidden", () => { shown = false; showProfiles = false; showModes = false; adding = false; previewId = null; }),
+      listen("flyout-shown", () => { lastFit = 0; reloadValues(); }),
+      listen("flyout-hidden", () => { showProfiles = false; showModes = false; adding = false; previewId = null; }),
     ]);
     return () => { ro.disconnect(); un.then((fns) => fns.forEach((f) => f())); };
   });
@@ -202,9 +207,9 @@
 
 <svelte:window onkeydown={onkey} />
 
-<main bind:this={root} class:shown class:solid class:alt class:always={app.settings?.general.showValues === "always"}>
+<main bind:this={root} class:solid class:always={app.settings?.general.showValues === "always"}>
   {#if sched?.enabled && sched.paused}
-    <section class="banner stagger" style="--i: 1" role="status">
+    <section class="banner" role="status">
       <span>{sched.pausedUntil ? t("app.schedulePausedUntil", { time: sched.pausedUntil }) : t("app.schedulePaused")}</span>
       <button class="link" onclick={() => resumeSchedule()}>{t("common.resume")}</button>
     </section>
@@ -225,10 +230,10 @@
       <button onclick={() => openSettings()}>{t("app.openSettings")}</button>
     </section>
   {:else}
-    {#each visible as m, idx (m.id)}
+    {#each visible as m (m.id)}
       {@const shownRows = rows(m)}
       {#if m.features.length === 0 || shownRows.length > 0}
-        <section class="card stagger" style="--i: {idx + 1}" aria-label={m.name}>
+        <section class="card" aria-label={m.name}>
           <header>
             {#if m.icon}
               <span class="badge" class:icon={MONITOR_ICONS[m.icon]} style={badgeStyle(m)} aria-hidden="true">{MONITOR_ICONS[m.icon] ?? m.number}</span>
@@ -275,7 +280,7 @@
   {/if}
 
   <!-- "All monitors" unfolds below the monitors like the drawers under it; its sliders stay while it folds away. -->
-  <div class="drawer stagger" class:open={linkedOpen} inert={!linkedOpen} style="--i: {visible.length + 1}">
+  <div class="drawer" class:open={linkedOpen} inert={!linkedOpen}>
     <div class="drawer-inner">
       <section class="card lcard" aria-label={t("app.allMonitors")}>
         <header>
@@ -295,7 +300,7 @@
     </div>
   </div>
 
-  <div class="drawer" class:open={showProfiles} inert={!showProfiles}>
+  <div class="drawer" class:open={profilesOpen} inert={!profilesOpen}>
     <div class="drawer-inner">
       <section class="card pcard" aria-label={t("app.profiles")}>
         <div class="ptiles">
@@ -339,7 +344,7 @@
     </div>
   </div>
 
-  <div class="drawer" class:open={showModes} inert={!showModes}>
+  <div class="drawer" class:open={modesOpen} inert={!modesOpen}>
     <div class="drawer-inner">
       <div class="card pcard mcard" role="menu" aria-label={t("app.displayMode")}>
         {#each modeItems as it (it.id)}
@@ -353,13 +358,17 @@
     </div>
   </div>
 
-  <footer class="stagger" style="--i: {visible.length + 2}">
-    <button class="icon" class:on={showProfiles} title={t("app.profiles")} aria-label={t("app.profiles")} aria-expanded={showProfiles}
-      onclick={() => openDrawer("profiles")}></button>
-    <button class="icon" class:on={app.settings?.linked.enabled} title={t("app.linkMonitors")} aria-label={t("app.linkMonitors")}
-      aria-pressed={app.settings?.linked.enabled ?? false}
-      onclick={() => updateSettings({ linked: { enabled: !app.settings?.linked.enabled } })}></button>
-    {#if canSwitchModes}
+  <footer>
+    {#if !profilesPinned && !hideProfilesButton}
+      <button class="icon" class:on={showProfiles} title={t("app.profiles")} aria-label={t("app.profiles")} aria-expanded={showProfiles}
+        onclick={() => openDrawer("profiles")}></button>
+    {/if}
+    {#if !app.settings?.linked.enabled && !hideLinkedButton}
+      <button class="icon" class:on={app.settings?.linked.enabled} title={t("app.linkMonitors")} aria-label={t("app.linkMonitors")}
+        aria-pressed={app.settings?.linked.enabled ?? false}
+        onclick={() => updateSettings({ linked: { enabled: !app.settings?.linked.enabled } })}></button>
+    {/if}
+    {#if canSwitchModes && !modesPinned && !hideModesButton}
       <button class="icon" class:on={showModes} title={t("app.displayMode")} aria-label={t("app.displayMode")} aria-expanded={showModes}
         onclick={() => openDrawer("modes")}>&#xEBC6;</button>
     {/if}

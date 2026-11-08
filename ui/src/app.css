@@ -223,14 +223,8 @@ button.link { background: transparent; border: none; color: var(--accent); paddi
 h1 { font-size: 15px; font-weight: 700; }
 .content h2 { font-size: 26px; font-weight: 600; margin-bottom: 8px; }
 
-/* Entrance: header, cards and footer rise in one after another. */
-@keyframes rise-a { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
-@keyframes rise-b { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
-main:not(.shown) .stagger { opacity: 0; }
-main.shown .stagger { animation: rise-a 0.42s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 50ms); }
-main.shown.alt .stagger { animation-name: rise-b; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-.banner, .toast { animation: fade-in 0.35s ease both; }
+.toast { animation: fade-in 0.35s ease both; }
 
 /* Small touches */
 .card, .group { transition: border-color 0.2s ease, box-shadow 0.25s ease; }
@@ -279,13 +273,10 @@ nav h1 { display: none; }
 }
 
 /* ====================== Profile picker (flyout) ====================== */
-/* The drawer takes its final height at once (0fr -> 1fr) and cancels the flex gap while it is folded.
-   The height is not animated here: the flyout window glides to it from Rust, and the contents fade in. */
+/* The drawer takes its final height at once (0fr -> 1fr) and cancels the flex gap while it is folded. */
 .drawer { display: grid; grid-template-rows: 0fr; margin-top: -8px; }
 .drawer.open { grid-template-rows: 1fr; margin-top: 0; }
-.drawer-inner { overflow: hidden; min-height: 0; clip-path: inset(0 0 100% 0); transition: clip-path 0.26s cubic-bezier(0.165, 0.84, 0.44, 1); }
-/* Every drawer unfolds the same way: the content is wiped in from the top in step with the window's height glide. */
-.drawer.open .drawer-inner { clip-path: inset(0); }
+.drawer-inner { overflow: hidden; min-height: 0; }
 .pcard { gap: 10px; }
 .ptiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .ptile { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 10px 4px 8px; background: transparent; border: 1px solid var(--stroke); border-radius: 8px; }

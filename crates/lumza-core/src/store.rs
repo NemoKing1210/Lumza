@@ -38,6 +38,16 @@ pub struct General {
     pub show_primary: bool,
     /// Show each display's refresh rate in the flyout.
     pub show_refresh_rate: bool,
+    /// Show the profiles card in the flyout permanently; its footer button is hidden.
+    pub show_profiles: bool,
+    /// Show the display-modes card in the flyout permanently; its footer button is hidden.
+    pub show_modes: bool,
+    /// Hide the profiles footer button (the block is not shown either).
+    pub hide_profiles_button: bool,
+    /// Hide the linked-monitors footer button (linking itself is unchanged).
+    pub hide_linked_button: bool,
+    /// Hide the display-modes footer button (the block is not shown either).
+    pub hide_modes_button: bool,
 }
 
 /// Tray icon styles; the order is the order of the picker.
@@ -55,6 +65,11 @@ impl Default for General {
             tray_icon: TRAY_ICONS[0].into(),
             show_primary: true,
             show_refresh_rate: true,
+            show_profiles: false,
+            show_modes: false,
+            hide_profiles_button: false,
+            hide_linked_button: false,
+            hide_modes_button: false,
         }
     }
 }
@@ -796,6 +811,28 @@ mod tests {
         assert_eq!(r.general.tray_icon, "contrast");
         assert!(s.update(&json!({"general": {"autostart": "yes"}})).is_err());
         assert!(s.get().general.autostart, "failed patch must not change anything");
+    }
+
+    #[test]
+    fn flyout_block_flags_default_off_and_persist() {
+        let dir = tmp("flyout-blocks");
+        let p = dir.join("settings.json");
+        fs::write(&p, r#"{"schemaVersion": 4}"#).unwrap();
+        let (s, _) = SettingsStore::load(p);
+        assert!(!s.get().general.show_profiles && !s.get().general.show_modes);
+        assert!(
+            !s.get().general.hide_profiles_button
+                && !s.get().general.hide_linked_button
+                && !s.get().general.hide_modes_button
+        );
+        let r = s
+            .update(&json!({"general": {
+                "showProfiles": true, "showModes": true,
+                "hideProfilesButton": true, "hideLinkedButton": true, "hideModesButton": true
+            }}))
+            .unwrap();
+        assert!(r.general.show_profiles && r.general.show_modes);
+        assert!(r.general.hide_profiles_button && r.general.hide_linked_button && r.general.hide_modes_button);
     }
 
     #[test]

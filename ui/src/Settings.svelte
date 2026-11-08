@@ -10,9 +10,10 @@
   import { LANGUAGES, t } from "./i18n.svelte";
   import TitleBar from "./TitleBar.svelte";
 
-  type Section = "general" | "link" | "monitors" | "profiles" | "schedule" | "hotkeys" | "advanced" | "about";
+  type Section = "general" | "flyout" | "link" | "monitors" | "profiles" | "schedule" | "hotkeys" | "advanced" | "about";
   const NAV: { id: Section; label: string; glyph: string }[] = [
     { id: "general", label: "set.nav.general", glyph: "" },
+    { id: "flyout", label: "set.nav.flyout", glyph: "" },
     { id: "monitors", label: "set.nav.monitors", glyph: "" },
     { id: "link", label: "set.nav.link", glyph: "" },
     { id: "profiles", label: "set.nav.profiles", glyph: "" },
@@ -49,6 +50,20 @@
   const setGeneral = (patch: Record<string, unknown>) => updateSettings({ general: patch });
   const setLinked = (patch: Record<string, unknown>) => updateSettings({ linked: patch });
   const setMonitor = (id: string, patch: Record<string, unknown>) => updateSettings({ monitors: { [id]: patch } });
+
+  // ---- flyout blocks: one three-state choice over a pin flag and a hide flag
+  type BlockMode = "button" | "pinned" | "hidden";
+  const blockMode = (pinned: boolean | undefined, hidden: boolean | undefined): BlockMode =>
+    pinned ? "pinned" : hidden ? "hidden" : "button";
+  const profilesMode = $derived(blockMode(app.settings?.general.showProfiles, app.settings?.general.hideProfilesButton));
+  const linkedMode = $derived(blockMode(app.settings?.linked.enabled, app.settings?.general.hideLinkedButton));
+  const modesMode = $derived(blockMode(app.settings?.general.showModes, app.settings?.general.hideModesButton));
+  const setProfilesMode = (mode: BlockMode) =>
+    setGeneral({ showProfiles: mode === "pinned", hideProfilesButton: mode === "hidden" });
+  const setModesMode = (mode: BlockMode) =>
+    setGeneral({ showModes: mode === "pinned", hideModesButton: mode === "hidden" });
+  const setLinkedMode = (mode: BlockMode) =>
+    updateSettings({ linked: { enabled: mode === "pinned" }, general: { hideLinkedButton: mode === "hidden" } });
 
   function commitOrder(ordered: MonitorDto[]) {
     monitors = ordered; // show the new order at once; the backend echoes it back through monitors-changed
@@ -408,6 +423,40 @@
             <output>{g.step}%</output>
           </span>
         </label>
+      </div>
+    {:else if section === "flyout"}
+      <h2>{t("set.nav.flyout")}</h2>
+      <div class="group">
+        <div class="line">
+          <span><b>{t("set.flyoutBlocks")}</b><small>{t("set.flyoutBlockHint")}</small></span>
+        </div>
+        <label class="line">
+          <span><b>{t("app.profiles")}</b></span>
+          <select value={profilesMode} onchange={(e) => setProfilesMode(e.currentTarget.value as BlockMode)}>
+            <option value="button">{t("set.modeButton")}</option>
+            <option value="pinned">{t("set.modePinned")}</option>
+            <option value="hidden">{t("set.modeHidden")}</option>
+          </select>
+        </label>
+        <label class="line">
+          <span><b>{t("app.linkMonitors")}</b></span>
+          <select value={linkedMode} onchange={(e) => setLinkedMode(e.currentTarget.value as BlockMode)}>
+            <option value="button">{t("set.modeButton")}</option>
+            <option value="pinned">{t("set.modePinned")}</option>
+            <option value="hidden">{t("set.modeHidden")}</option>
+          </select>
+        </label>
+        <label class="line">
+          <span><b>{t("app.displayMode")}</b></span>
+          <select value={modesMode} onchange={(e) => setModesMode(e.currentTarget.value as BlockMode)}>
+            <option value="button">{t("set.modeButton")}</option>
+            <option value="pinned">{t("set.modePinned")}</option>
+            <option value="hidden">{t("set.modeHidden")}</option>
+          </select>
+        </label>
+      </div>
+      <div class="group">
+        <div class="line"><span><b>{t("set.flyoutDisplay")}</b></span></div>
         <label class="line">
           <span><b>{t("set.showValues")}</b><small>{t("set.showValuesHint")}</small></span>
           <select value={g.showValues} onchange={(e) => setGeneral({ showValues: e.currentTarget.value })}>
